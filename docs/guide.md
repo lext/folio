@@ -75,6 +75,8 @@ main file, compiler and timeout for both GUI and CLI builds. Managed builds use
 build commands are not part of schema 1. **Validate project** checks the structure
 and settings. Managed builds/export reject misplaced files, symlinks, missing
 required folders, unknown fields and invalid settings with an actionable error.
+Hidden files and folders (`.github/`, `.gitattributes`) and editor backup files
+(`main.tex~`, `.swp`, `.bak`) are ignored, not rejected.
 
 Opening a different project asks how to handle unsaved files. Standalone sources
 and folders without a manifest are refused. To bring existing LaTeX into Folio,
@@ -98,7 +100,10 @@ a **new folder outside the authoring project**:
 Both modes expand included sections and tables into **one `main.tex`**, put required
 figures/resources **beside it**, and resolve duplicate asset names deterministically.
 The folder includes a verified `main.pdf` and `BUILD.txt` with the exact build command.
-For embedded bibliographies, that command includes `-bibtex-`.
+For embedded bibliographies, that command includes `-bibtex-`. When the project has
+a `supplement.tex`, it is flattened and verified the same way and exported beside the
+paper as `supplement.tex` and `supplement.pdf`. The editor preview and
+`folio-cli build` still typeset `main.tex` only.
 
 Export runs in the background from a saved snapshot. It builds the snapshot,
 flattens it, builds the export, and only then creates the destination. **Cancel
@@ -203,6 +208,17 @@ with bundled fallbacks. No webview, blur, widget transitions or blinking caret
 is needed. File/command results are virtualized and refilter only when the query
 changes. Line numbers and Git marks appear in the source gutter. Line numbers are enabled
 by default; `[editor] line_numbers = false` hides them if desired.
+Long source lines wrap at the window width; a wrapped line keeps one line number.
+
+A buffer without unsaved edits follows changes made to its file outside Folio,
+such as `git pull` or another editor. A buffer with unsaved edits is never
+replaced: saving reports the conflict, and **Reload** discards your edits.
+About a second after you stop typing, Folio keeps a copy of each unsaved buffer
+in `.folio/recovery/`. If Folio or the computer stops before you save, opening
+the file restores those edits as unsaved changes. A copy is removed when its
+buffer is saved or deliberately discarded. If the file itself changed in the
+meantime, the copy is not applied; it is kept beside the others with an
+`.orphaned` suffix and Folio names its path.
 
 **Cmd/Ctrl+F** opens search. **Enter** moves forward and **Shift+Enter** moves
 backward while the search field keeps focus; **Escape** dismisses it. These map
