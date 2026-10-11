@@ -136,6 +136,34 @@ fn supplement_is_an_optional_standalone_root_document() {
 }
 
 #[test]
+fn hidden_tooling_and_editor_backup_files_never_block_a_project() {
+    let f = Fixture::new();
+    let p = Project::create(&f.0, "Paper", Engine::PdfLatex).unwrap();
+    let before = p.files().unwrap();
+    fs::create_dir_all(f.0.join(".github/workflows")).unwrap();
+    for stray in [
+        ".github/workflows/ci.yml",
+        ".gitattributes",
+        ".editorconfig",
+        ".main.tex.folio-123-0",
+        ".main.tex.swp",
+        "main.tex~",
+        "main.tex.bak",
+        "sections/introduction.tex~",
+        "sections/.introduction.tex.swp",
+        "figures/.DS_Store",
+        "Thumbs.db",
+    ] {
+        fs::write(f.0.join(stray), "").unwrap();
+        assert_eq!(p.files().unwrap(), before, "{stray} must be ignored");
+    }
+    p.build_config().unwrap();
+    // A visible file in the wrong place is still reported.
+    fs::write(f.0.join("Makefile"), "").unwrap();
+    assert!(p.files().unwrap_err().to_string().contains("Makefile"));
+}
+
+#[test]
 fn misplaced_files_and_missing_folders_are_actionable_validation_errors() {
     let f = Fixture::new();
     let p = Project::create(&f.0, "Paper", Engine::PdfLatex).unwrap();
