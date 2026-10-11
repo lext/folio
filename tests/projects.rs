@@ -62,6 +62,7 @@ fn creates_a_strict_portable_project_and_never_overwrites_an_existing_directory(
     for name in [
         MANIFEST,
         "main.tex",
+        "supplement.tex",
         "references.bib",
         "sections/introduction.tex",
     ] {
@@ -106,6 +107,32 @@ fn manifest_rejects_typos_unknown_versions_and_invalid_build_values() {
     ] {
         assert!(Manifest::parse(&bad).is_err(), "{bad}");
     }
+}
+
+#[test]
+fn supplement_is_an_optional_standalone_root_document() {
+    let f = Fixture::new();
+    let p = Project::create(&f.0, "Paper", Engine::PdfLatex).unwrap();
+    let supplement = fs::read_to_string(f.0.join("supplement.tex")).unwrap();
+    assert!(supplement.contains("\\documentclass") && supplement.contains("\\end{document}"));
+    assert!(
+        !fs::read_to_string(f.0.join("main.tex"))
+            .unwrap()
+            .contains("supplement"),
+        "the supplement is its own document"
+    );
+    assert!(
+        p.files()
+            .unwrap()
+            .contains(&std::path::PathBuf::from("supplement.tex"))
+    );
+    // Projects created before the supplement existed remain valid.
+    fs::remove_file(f.0.join("supplement.tex")).unwrap();
+    assert!(
+        !p.files()
+            .unwrap()
+            .contains(&std::path::PathBuf::from("supplement.tex"))
+    );
 }
 
 #[test]

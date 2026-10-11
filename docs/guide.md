@@ -33,6 +33,7 @@ New projects use a fixed layout of ordinary, Git-friendly files:
 paper/
   folio.project.toml
   main.tex
+  supplement.tex
   references.bib
   sections/introduction.tex
   figures/
@@ -42,7 +43,9 @@ paper/
 Keep chapter/section sources in `sections/`, figure assets in `figures/`, and table
 sources in `tables/`. Optional `bibliography/`, `styles/`, and `data/` hold extra
 bibliographies, local packages/classes/styles, and supporting data. `preamble.tex`
-may live at the root. Required empty folders contain `.gitkeep` so a Git checkout
+may live at the root. `supplement.tex` is a standalone document for supplementary
+material: it has its own preamble, `main.tex` does not include it, and projects
+without it remain valid. Required empty folders contain `.gitkeep` so a Git checkout
 retains the layout. Build output stays in `.folio/`.
 
 **Add project file** (Cmd/Ctrl+Shift+N with the default settings) creates a file by relative
