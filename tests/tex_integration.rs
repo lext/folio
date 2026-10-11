@@ -44,6 +44,19 @@ fn structured_project_and_flat_exports_build_with_both_bibliography_modes() {
         .replace("\\bibliographystyle{plain}", "\\bibliographystyle{styles/references}")
         .replace("\\begin{document}", "\\graphicspath{{figures/a/}}\n\\begin{document}\n\\includegraphics[width=1cm]{chart.v1}\n\\includegraphics[width=1cm]{figures/b/chart.v1}\n");
     fs::write(p.directory.join("main.tex"), &main).unwrap();
+    // The standalone supplement is exported beside the paper, with a table it
+    // inputs and a figure that only it uses.
+    fs::copy(&starter.pdf, p.directory.join("figures/extra.pdf")).unwrap();
+    fs::write(
+        p.directory.join("tables/extra.tex"),
+        "\\begin{tabular}{l}Supplementary score\\end{tabular}\n",
+    )
+    .unwrap();
+    fs::write(
+        p.directory.join("supplement.tex"),
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\begin{document}\n\\section*{Supplement}\n\\input{tables/extra}\n\\includegraphics[width=1cm]{figures/extra}\n\\end{document}\n",
+    )
+    .unwrap();
     for mode in [Bibliography::Keep, Bibliography::Inline] {
         let destination = base.join(format!("export-{mode:?}"));
         let result =
@@ -78,11 +91,36 @@ fn structured_project_and_flat_exports_build_with_both_bibliography_modes() {
             fs::read_to_string(p.directory.join("main.tex")).unwrap(),
             main
         );
+        let supplement = fs::read_to_string(destination.join("supplement.tex")).unwrap();
+        assert!(supplement.contains("Supplementary score"), "{supplement}");
+        assert!(!supplement.contains("\\input{tables/"), "{supplement}");
+        assert!(supplement.contains("{extra.pdf}"), "{supplement}");
+        assert!(destination.join("extra.pdf").is_file());
+        assert!(destination.join("supplement.pdf").is_file());
+        let build = fs::read_to_string(destination.join("BUILD.txt")).unwrap();
+        assert!(build.contains("main.tex") && build.contains("supplement.tex"));
         assert!(
             export::flat(&p, &destination, mode, Arc::new(AtomicBool::new(false))).is_err(),
             "never overwrite an export"
         );
     }
+    // A project without a supplement exports the paper alone, as before.
+    fs::remove_file(p.directory.join("supplement.tex")).unwrap();
+    let alone = base.join("export-alone");
+    export::flat(
+        &p,
+        &alone,
+        Bibliography::Keep,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    assert!(alone.join("main.pdf").is_file());
+    assert!(!alone.join("supplement.tex").exists() && !alone.join("supplement.pdf").exists());
+    assert!(
+        !fs::read_to_string(alone.join("BUILD.txt"))
+            .unwrap()
+            .contains("supplement")
+    );
     let cancelled = base.join("cancelled");
     assert!(
         export::flat(

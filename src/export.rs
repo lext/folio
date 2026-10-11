@@ -83,18 +83,29 @@ pub fn flat(
         {
             return Err(error("Project changed while preparing export; retry"));
         }
-        preflight(&source)?;
+        // main.tex is the paper. An optional supplement.tex is a second,
+        // standalone document that is flattened and verified the same way.
+        let mut roots = vec!["main"];
+        if files.iter().any(|file| file == Path::new("supplement.tex")) {
+            roots.push("supplement");
+        }
         let snapshot = Project::load(&source)?;
         let config = snapshot.build_config()?;
-        let built = build::compile(&config, cancel.clone())?;
-        if !built.success {
-            return Err(error(format!(
-                "Original project did not build; export cancelled.\n{}",
-                built.log
-            )));
+        for root in &roots {
+            preflight(&source, root)?;
+            let mut original = BuildConfig::new(source.join(format!("{root}.tex")), config.engine);
+            original.timeout = config.timeout;
+            original.use_latexmkrc = false;
+            let built = build::compile(&original, cancel.clone())?;
+            if !built.success {
+                return Err(error(format!(
+                    "Original {root}.tex did not build; export cancelled.\n{}",
+                    built.log
+                )));
+            }
         }
-        let resources = used_resources(&source, &files)?;
-        let names = resource_names(&resources);
+        let resources = used_resources(&source, &files, &roots)?;
+        let names = resource_names(&resources, &roots);
         let mut protected = vec![];
         for file in &files {
             if file.extension().is_some_and(|e| e == "tex") {
@@ -102,15 +113,18 @@ pub fn flat(
                 fs::write(&path, protect(&fs::read_to_string(&path)?, &mut protected))?;
             }
         }
-        let mut flat = run_latexpand(&source, config.timeout, &cancel)?;
-        for (key, value) in protected {
-            flat = flat.replace(&key, &value);
+        for root in &roots {
+            let mut flat = run_latexpand(&source, root, config.timeout, &cancel)?;
+            for (key, value) in &protected {
+                flat = flat.replace(key, value);
+            }
+            flat = rewrite_resources(&flat, &names)?;
+            if bibliography == Bibliography::Inline {
+                flat =
+                    inline_bibliography(&flat, &source.join(format!(".folio/{root}.bbl")), root)?;
+            }
+            fs::write(output.join(format!("{root}.tex")), &flat)?;
         }
-        flat = rewrite_resources(&flat, &names)?;
-        if bibliography == Bibliography::Inline {
-            flat = inline_bibliography(&flat, &source.join(".folio/main.bbl"))?;
-        }
-        fs::write(output.join("main.tex"), &flat)?;
         for (path, name) in &names {
             if bibliography == Bibliography::Inline && path.extension().is_some_and(|e| e == "bib")
             {
@@ -130,51 +144,61 @@ pub fn flat(
                 fs::copy(from, output.join(name))?;
             }
         }
-        let mut verification = BuildConfig::new(output.join("main.tex"), config.engine);
-        verification.timeout = config.timeout;
-        verification.use_latexmkrc = false;
-        verification.run_bibliography = bibliography == Bibliography::Keep;
-        let checked = build::compile(&verification, cancel.clone())?;
-        if !checked.success {
-            return Err(error(format!(
-                "Flat export did not compile; nothing was published.\n{}",
-                checked.log
-            )));
-        }
-        // An exported build must not retain paths back into its source snapshot.
-        let record = fs::read_to_string(output.join(".folio/main.fls"))?;
-        if record.lines().any(|line| {
-            line.strip_prefix("INPUT ").is_some_and(|p| {
-                output
-                    .join(p)
-                    .canonicalize()
-                    .is_ok_and(|p| p.starts_with(&source))
-            })
-        }) {
-            return Err(error("Flat export still depends on a source-project path"));
-        }
-        fs::copy(checked.pdf, output.join("main.pdf"))?;
-        if bibliography == Bibliography::Keep && output.join(".folio/main.bbl").exists() {
-            fs::copy(output.join(".folio/main.bbl"), output.join("main.bbl"))?;
+        for root in &roots {
+            let mut verification =
+                BuildConfig::new(output.join(format!("{root}.tex")), config.engine);
+            verification.timeout = config.timeout;
+            verification.use_latexmkrc = false;
+            verification.run_bibliography = bibliography == Bibliography::Keep;
+            let checked = build::compile(&verification, cancel.clone())?;
+            if !checked.success {
+                return Err(error(format!(
+                    "Flat export of {root}.tex did not compile; nothing was published.\n{}",
+                    checked.log
+                )));
+            }
+            // An exported build must not retain paths back into its source snapshot.
+            let record = fs::read_to_string(output.join(format!(".folio/{root}.fls")))?;
+            if record.lines().any(|line| {
+                line.strip_prefix("INPUT ").is_some_and(|p| {
+                    output
+                        .join(p)
+                        .canonicalize()
+                        .is_ok_and(|p| p.starts_with(&source))
+                })
+            }) {
+                return Err(error("Flat export still depends on a source-project path"));
+            }
+            fs::copy(checked.pdf, output.join(format!("{root}.pdf")))?;
+            let bbl = output.join(format!(".folio/{root}.bbl"));
+            if bibliography == Bibliography::Keep && bbl.exists() {
+                fs::copy(bbl, output.join(format!("{root}.bbl")))?;
+            }
         }
         fs::remove_dir_all(output.join(".folio"))?;
-        if bibliography == Bibliography::Inline {
-            let _ = fs::remove_file(output.join("main.bbl"));
-        }
         let engine = match config.engine {
             build::Engine::PdfLatex => "-pdf",
             build::Engine::XeLatex => "-xelatex",
             build::Engine::LuaLatex => "-lualatex",
         };
+        let options = if bibliography == Bibliography::Inline {
+            "-bibtex- "
+        } else {
+            ""
+        };
         fs::write(
             output.join("BUILD.txt"),
             format!(
-                "Build with TeX Live or MiKTeX:\nlatexmk -norc {engine} {}main.tex\n\nVerified by Folio. Sections and tables are expanded in main.tex.\n",
-                if bibliography == Bibliography::Inline {
-                    "-bibtex- "
-                } else {
-                    ""
-                }
+                "Build with TeX Live or MiKTeX:\n{}\nVerified by Folio. Sections and tables are expanded in {}.\n",
+                roots
+                    .iter()
+                    .map(|root| format!("latexmk -norc {engine} {options}{root}.tex\n"))
+                    .collect::<String>(),
+                roots
+                    .iter()
+                    .map(|root| format!("{root}.tex"))
+                    .collect::<Vec<_>>()
+                    .join(" and "),
             ),
         )?;
         check_cancel(&cancel)?;
@@ -194,16 +218,15 @@ pub fn flat(
     result
 }
 
-fn resource_names(paths: &[PathBuf]) -> BTreeMap<PathBuf, String> {
+fn resource_names(paths: &[PathBuf], roots: &[&str]) -> BTreeMap<PathBuf, String> {
     let mut paths = paths.to_vec();
     paths.sort();
     paths.dedup();
-    let mut used = HashSet::from([
-        "main.tex".to_owned(),
-        "main.pdf".to_owned(),
-        "main.bbl".to_owned(),
-        "build.txt".to_owned(),
-    ]);
+    // Output names are compared case-insensitively for portable archives.
+    let mut used = HashSet::from(["build.txt".to_owned()]);
+    for root in roots {
+        used.extend(["tex", "pdf", "bbl"].map(|extension| format!("{root}.{extension}")));
+    }
     paths
         .into_iter()
         .map(|path| {
@@ -508,7 +531,7 @@ fn protect(text: &str, saved: &mut Vec<(String, String)>) -> String {
         .collect();
     apply_edits(text, edits).unwrap()
 }
-fn preflight(directory: &Path) -> io::Result<()> {
+fn preflight(directory: &Path, document: &str) -> io::Result<()> {
     fn visit(root: &Path, path: &Path, import: &Path, stack: &mut Vec<PathBuf>) -> io::Result<()> {
         let path = path.canonicalize()?;
         if !path.starts_with(root) {
@@ -554,16 +577,23 @@ fn preflight(directory: &Path) -> io::Result<()> {
         Ok(())
     }
     let root = directory.canonicalize()?;
-    visit(&root, &root.join("main.tex"), Path::new(""), &mut vec![])
+    visit(
+        &root,
+        &root.join(format!("{document}.tex")),
+        Path::new(""),
+        &mut vec![],
+    )
 }
-fn used_resources(source: &Path, files: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
-    let record = fs::read_to_string(source.join(".folio/main.fls"))?;
+fn used_resources(source: &Path, files: &[PathBuf], roots: &[&str]) -> io::Result<Vec<PathBuf>> {
     let mut used = HashSet::new();
-    for input in record.lines().filter_map(|s| s.strip_prefix("INPUT ")) {
-        if let Ok(path) = source.join(input).canonicalize()
-            && let Ok(relative) = path.strip_prefix(source)
-        {
-            used.insert(relative.to_owned());
+    for root in roots {
+        let record = fs::read_to_string(source.join(format!(".folio/{root}.fls")))?;
+        for input in record.lines().filter_map(|s| s.strip_prefix("INPUT ")) {
+            if let Ok(path) = source.join(input).canonicalize()
+                && let Ok(relative) = path.strip_prefix(source)
+            {
+                used.insert(relative.to_owned());
+            }
         }
     }
     // BibTeX/Biber read their own resources; these are absent from TeX's recorder.
@@ -576,7 +606,7 @@ fn used_resources(source: &Path, files: &[PathBuf]) -> io::Result<Vec<PathBuf>> 
         .cloned()
         .collect())
 }
-fn inline_bibliography(text: &str, bbl: &Path) -> io::Result<String> {
+fn inline_bibliography(text: &str, bbl: &Path, document: &str) -> io::Result<String> {
     let calls = calls(text)?;
     if !calls
         .iter()
@@ -608,13 +638,18 @@ fn inline_bibliography(text: &str, bbl: &Path) -> io::Result<String> {
     let flat = apply_edits(text, edits)?;
     if biblatex {
         Ok(format!(
-            "% Compiled BibLaTeX data; no .bib file or Biber run is needed.\n\\begin{{filecontents*}}[overwrite]{{main.bbl}}\n{compiled}\n\\end{{filecontents*}}\n{flat}"
+            "% Compiled BibLaTeX data; no .bib file or Biber run is needed.\n\\begin{{filecontents*}}[overwrite]{{{document}.bbl}}\n{compiled}\n\\end{{filecontents*}}\n{flat}"
         ))
     } else {
         Ok(flat)
     }
 }
-fn run_latexpand(source: &Path, timeout: Duration, cancel: &AtomicBool) -> io::Result<String> {
+fn run_latexpand(
+    source: &Path,
+    document: &str,
+    timeout: Duration,
+    cancel: &AtomicBool,
+) -> io::Result<String> {
     let path = source.join(".folio/expanded.tex");
     let log = source.join(".folio/export.log");
     let executable = build::executable("latexpand");
@@ -630,7 +665,8 @@ fn run_latexpand(source: &Path, timeout: Duration, cancel: &AtomicBool) -> io::R
             "PATH",
             std::env::join_paths(paths).map_err(io::Error::other)?,
         )
-        .args(["--keep-comments", "--empty-comments", "--fatal", "main.tex"])
+        .args(["--keep-comments", "--empty-comments", "--fatal"])
+        .arg(format!("{document}.tex"))
         .stdin(Stdio::null())
         .stdout(fs::File::create(&path)?)
         .stderr(fs::File::create(&log)?);
@@ -702,7 +738,7 @@ mod tests {
         .into_iter()
         .map(Into::into)
         .collect();
-        let names = resource_names(&paths);
+        let names = resource_names(&paths, &["main"]);
         assert_eq!(names.len(), 4);
         let unique: std::collections::HashSet<_> =
             names.values().map(|s| s.to_lowercase()).collect();
@@ -710,7 +746,7 @@ mod tests {
         assert!(names.values().all(|s| !s.contains('/')));
         let mut reversed = paths;
         reversed.reverse();
-        assert_eq!(names, resource_names(&reversed));
+        assert_eq!(names, resource_names(&reversed, &["main"]));
         assert_eq!(names[Path::new("references.bib")], "references.bib");
     }
     #[test]
@@ -751,7 +787,7 @@ mod tests {
             "\\input{../outside}",
         ] {
             std::fs::write(root.join("main.tex"), input).unwrap();
-            assert!(preflight(&root).is_err(), "{input}");
+            assert!(preflight(&root, "main").is_err(), "{input}");
         }
         std::fs::remove_dir_all(root).unwrap();
     }
