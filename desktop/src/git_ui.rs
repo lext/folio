@@ -27,6 +27,8 @@ pub struct Git {
     dirty: bool,
     due: Instant,
     refreshed: Instant,
+    /// Repository fingerprint the current comparison was requested with.
+    state: Option<u64>,
     pub comparison: Option<Comparison>,
     history: Vec<Commit>,
     error: Option<String>,
@@ -71,6 +73,7 @@ impl Git {
             dirty: true,
             due: Instant::now(),
             refreshed: Instant::now(),
+            state: None,
             comparison: None,
             history: vec![],
             error: None,
@@ -92,9 +95,14 @@ impl Git {
             self.apply(reply);
         }
         if !self.dirty && self.refreshed.elapsed() >= Duration::from_secs(2) {
-            self.id += 1;
-            self.dirty = true;
-            self.due = Instant::now();
+            // The text and revision are unchanged, so only a moved HEAD can
+            // alter the result. Check that with a few stats, not Git processes.
+            self.refreshed = Instant::now();
+            if git::state(&self.path) != self.state {
+                self.id += 1;
+                self.dirty = true;
+                self.due = Instant::now();
+            }
         }
         if self.dirty {
             if Instant::now() >= self.due {
@@ -106,6 +114,7 @@ impl Git {
                 });
                 self.dirty = false;
                 self.refreshed = Instant::now();
+                self.state = git::state(&self.path);
             } else {
                 ctx.request_repaint_after(self.due.saturating_duration_since(Instant::now()));
             }

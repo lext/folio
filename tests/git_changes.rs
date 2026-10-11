@@ -93,3 +93,38 @@ fn outside_repo_and_unborn_head_are_explicit_states() {
     assert_eq!(result.hunks[0].kind(), ChangeKind::Added);
     fs::remove_dir_all(dir).unwrap();
 }
+
+#[test]
+fn repository_state_changes_only_when_head_moves() {
+    let dir = std::env::temp_dir().join(format!("folio git state {}", std::process::id()));
+    let _ = fs::remove_dir_all(&dir);
+    fs::create_dir_all(dir.join("plain/sections")).unwrap();
+    fs::create_dir_all(dir.join("repo/sections")).unwrap();
+    assert_eq!(
+        git::state(&dir.join("plain/sections/a.tex")),
+        None,
+        "a folder outside any repository needs no Git process"
+    );
+    let repo = dir.join("repo");
+    let file = repo.join("sections/a.tex");
+    git_cmd(&repo, &["init", "-q"]);
+    git_cmd(&repo, &["config", "user.email", "test@example.invalid"]);
+    git_cmd(&repo, &["config", "user.name", "Folio test"]);
+    fs::write(&file, "one\n").unwrap();
+    git_cmd(&repo, &["add", "."]);
+    git_cmd(&repo, &["commit", "-q", "-m", "first"]);
+    let first = git::state(&file);
+    assert!(first.is_some());
+    fs::write(&file, "one\ntwo\n").unwrap();
+    assert_eq!(
+        git::state(&file),
+        first,
+        "editing the work tree does not move HEAD"
+    );
+    git_cmd(&repo, &["commit", "-q", "-am", "second"]);
+    let second = git::state(&file);
+    assert_ne!(second, first, "a commit must refresh the comparison");
+    git_cmd(&repo, &["checkout", "-q", "-b", "other", "HEAD~1"]);
+    assert_ne!(git::state(&file), second, "a checkout must refresh it too");
+    fs::remove_dir_all(dir).unwrap();
+}

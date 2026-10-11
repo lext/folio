@@ -59,6 +59,7 @@ impl App {
         self.disk_sources.clear();
         self.disk_indexes.clear();
         self.project_stamp = None;
+        self.scan_key = None;
         self.scan_generation += 1;
         self.scanning = false;
         self.preview.clear();
