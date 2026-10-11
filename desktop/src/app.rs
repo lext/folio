@@ -101,6 +101,7 @@ enum Event {
     FigureImported(Result<Option<PathBuf>, String>),
     AssetOpened(Result<(), String>),
     Scanned(u64, u64, crate::project::Snapshot),
+    ScanUnchanged(u64),
     Build(Result<BuildResult, String>),
     Source(u64, Result<SourceLocation, String>, Option<WordAnchor>),
     Destination(u64, Result<Vec<PdfLocation>, String>),
@@ -131,7 +132,11 @@ pub struct App {
     ctx: egui::Context,
     preview_pending: bool,
     project_stamp: Option<u64>,
+    /// Key of the applied snapshot; an identical periodic scan is skipped.
+    scan_key: Option<u64>,
     last_scan: Instant,
+    /// When the build revision last moved; scans wait for a pause in typing.
+    last_edit: (u64, Instant),
     scan_generation: u64,
     scanning: bool,
     preview: Preview,
@@ -209,7 +214,9 @@ impl App {
             ctx: ctx.clone(),
             preview_pending: false,
             project_stamp: None,
+            scan_key: None,
             last_scan: Instant::now(),
+            last_edit: (0, Instant::now() - Duration::from_secs(1)),
             scan_generation: 0,
             scanning: false,
             git: crate::git_ui::Git::new(ctx.clone()),
@@ -318,6 +325,7 @@ impl App {
             self.managed = Some(project.clone());
         }
         self.project_stamp = Some(snapshot.stamp);
+        self.scan_key = Some(snapshot.key);
         self.files = snapshot
             .files
             .into_iter()
@@ -355,6 +363,8 @@ impl App {
     fn refresh_project(&mut self) {
         self.scan_generation += 1;
         self.scanning = false;
+        // A save, open or reload must be read back even if nothing looks new.
+        self.scan_key = None;
         self.request_project_scan(&self.ctx.clone());
     }
     fn request_project_scan(&mut self, ctx: &egui::Context) {
@@ -370,11 +380,17 @@ impl App {
         let generation = self.scan_generation;
         let revision = self.layers.revision;
         let buffers = self.scan_buffers();
+        let previous = self.scan_key;
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         thread::spawn(move || {
-            let snapshot = crate::project::scan(&project.directory.join("main.tex"), &buffers);
-            let _ = tx.send(Event::Scanned(generation, revision, snapshot));
+            let root = project.directory.join("main.tex");
+            let _ = tx.send(
+                match crate::project::scan_if_changed(&root, &buffers, previous) {
+                    Some(snapshot) => Event::Scanned(generation, revision, snapshot),
+                    None => Event::ScanUnchanged(generation),
+                },
+            );
             ctx.request_repaint();
         });
     }
@@ -551,6 +567,9 @@ impl App {
                         // A scan must not overwrite newer unsaved bibliography state.
                         self.last_scan = Instant::now() - Duration::from_secs(3);
                     }
+                }
+                Event::ScanUnchanged(generation) if generation == self.scan_generation => {
+                    self.scanning = false;
                 }
                 Event::Build(result) => {
                     self.building = false;
@@ -1153,8 +1172,18 @@ impl eframe::App for App {
             self.close_dialog = true;
         }
         self.handle_shortcuts(ctx);
+        if self.last_edit.0 != self.layers.revision {
+            self.last_edit = (self.layers.revision, Instant::now());
+        }
         if self.last_scan.elapsed() > Duration::from_secs(2) {
-            self.request_project_scan(ctx);
+            // A scan made from older text is discarded, so scanning during a
+            // burst of typing is wasted work. Wait for a short pause instead.
+            let quiet = Duration::from_millis(500);
+            if self.last_edit.1.elapsed() >= quiet {
+                self.request_project_scan(ctx);
+            } else {
+                ctx.request_repaint_after(quiet);
+            }
         }
         // Publish external edits when their background scan arrives. Preview
         // buffers were saved on entry, so this path need not scan/save again.

@@ -48,6 +48,36 @@ pub struct Comparison {
     pub commit: Option<String>,
     pub hunks: Vec<Hunk>,
 }
+/// A cheap fingerprint of the repository state a comparison depends on, read
+/// with a few `stat` calls and no Git process. It changes when HEAD moves
+/// (commit, checkout, pull, reset); `None` means `path` is not in a work tree.
+pub fn state(path: &Path) -> Option<u64> {
+    use std::hash::{Hash, Hasher};
+    let dot_git = path
+        .ancestors()
+        .skip(1)
+        .map(|d| d.join(".git"))
+        .find(|p| p.exists())?;
+    // A linked work tree or submodule has a `.git` file naming its real directory.
+    let directory = if dot_git.is_file() {
+        let text = fs::read_to_string(&dot_git).ok()?;
+        dot_git
+            .parent()?
+            .join(text.lines().next()?.strip_prefix("gitdir:")?.trim())
+    } else {
+        dot_git
+    };
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    directory.hash(&mut hasher);
+    for name in ["HEAD", "logs/HEAD", "packed-refs"] {
+        if let Ok(meta) = fs::metadata(directory.join(name)) {
+            name.hash(&mut hasher);
+            meta.len().hash(&mut hasher);
+            meta.modified().ok().hash(&mut hasher);
+        }
+    }
+    Some(hasher.finish())
+}
 fn command(dir: &Path) -> Command {
     let mut cmd = Command::new("git");
     cmd.arg("-C")
