@@ -1,0 +1,18 @@
+# Folio project file. Copy it next to your main.tex and adjust the values.
+# Unknown keys are rejected, so a typo is reported instead of ignored.
+schema = 1 # manifest format version; always 1
+
+[project]
+name = "BibTeX paper" # shown in the window caption
+main = "main.tex"     # the document Folio typesets; must be main.tex
+
+[build]
+# pdflatex, xelatex or lualatex.
+engine = "pdflatex"
+# Seconds before a build is stopped. A first build with a bibliography runs
+# LaTeX several times; raise this for long documents. 0 disables the limit.
+timeout_seconds = 120
+
+# There is no bibliography setting. Folio runs latexmk, which sees
+# \bibliography{...} in main.tex and runs BibTeX and the extra LaTeX passes
+# by itself. See README.md in this folder.

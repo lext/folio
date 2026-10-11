@@ -1,0 +1,17 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\title{Citing with BibTeX}
+\author{Folio}
+\date{}
+
+\begin{document}
+\maketitle
+
+\input{sections/introduction}
+
+% BibTeX: choose a style, then name the .bib files without their extension.
+% Paths are relative to this file; separate several files with commas.
+\bibliographystyle{plain}
+\bibliography{references,bibliography/books}
+\end{document}

@@ -1,0 +1,19 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+% BibLaTeX with the Biber backend. Name each .bib file with its extension;
+% paths are relative to this file.
+\usepackage[backend=biber,style=authoryear]{biblatex}
+\addbibresource{references.bib}
+\addbibresource{bibliography/books.bib}
+\title{Citing with BibLaTeX}
+\author{Folio}
+\date{}
+
+\begin{document}
+\maketitle
+
+\input{sections/introduction}
+
+\printbibliography
+\end{document}

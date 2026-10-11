@@ -87,6 +87,45 @@ Files within the current project open through the browser or surface switcher;
 external dependencies cannot become editable buffers. Files and the manifest
 remain readable by any text editor, Git tool or local LLM.
 
+### Project file and bibliographies
+
+`folio.project.toml` holds every per-project setting. Unknown keys are rejected,
+so a typo is reported rather than ignored. This is the complete file:
+
+```toml
+schema = 1 # manifest format version; always 1
+
+[project]
+name = "Paper"    # shown in the window caption
+main = "main.tex" # the document Folio typesets; must be main.tex
+
+[build]
+engine = "pdflatex"   # pdflatex, xelatex or lualatex
+timeout_seconds = 120 # a first build with a bibliography runs LaTeX several times; 0 disables the limit
+```
+
+There is no bibliography setting. Folio runs `latexmk`, which reads `main.tex`,
+decides whether BibTeX or Biber is needed, runs it, and reruns LaTeX until the
+citations settle. What you write in `main.tex` selects the tool:
+
+| | BibTeX | BibLaTeX with Biber |
+| --- | --- | --- |
+| Preamble | nothing required | `\usepackage[backend=biber]{biblatex}` and one `\addbibresource{references.bib}` per file, with the extension |
+| Where the list appears | `\bibliographystyle{plain}` then `\bibliography{references}`, without the extension; separate several files with commas | `\printbibliography` |
+| Tool you need installed | `bibtex` (in every TeX Live and MacTeX) | the `biblatex` package and the `biber` program |
+| Template | [examples/bibtex](../examples/bibtex/) | [examples/biblatex](../examples/biblatex/) |
+
+Keep entries in `references.bib` at the project root, and further `.bib` files in
+`bibliography/`; a local `.bst` style goes in `styles/`. Paths in
+`\bibliography` and `\addbibresource` are relative to `main.tex`, for example
+`bibliography/books`. Both templates are complete projects with a commented
+`folio.project.toml`: copy one, or copy its project file beside your own `main.tex`.
+
+If a bibliography does not appear, open the compiler output from the build panel.
+A citation shown as **[?]** means its key is not in any listed `.bib` file. A
+build that stops with Biber not found needs the `biber` program installed; see
+[development setup](../CONTRIBUTING.md#development-setup) for the package names.
+
 ### Flat export
 
 Choose **Export flat project** in Commands, select a bibliography mode, then choose

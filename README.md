@@ -86,8 +86,8 @@ and build timeout. Sources, sections, figures and tables remain ordinary files.
 
 ## Documentation
 
-- [User guide](docs/guide.md): projects, settings, navigation, Git and flat export.
-- [Examples](examples/README.md): introductory, multi-file and performance projects.
+- [User guide](docs/guide.md): projects, the project file, bibliographies, settings, navigation, Git and flat export.
+- [Examples](examples/README.md): introductory, multi-file and performance projects, plus BibTeX and BibLaTeX project templates.
 - [Contributing](CONTRIBUTING.md): TDD workflow, dependencies, checks and packaging.
 - [Architecture](docs/architecture.md): modules, worker boundaries and state ownership.
 - [Validation record](docs/validation.md): checks performed and platform limitations.
