@@ -2499,7 +2499,10 @@ mod tests {
         ManagedProject::create(&dir, "Test paper", Engine::PdfLatex).unwrap();
         let main = dir.join("main.tex");
         let chapter = dir.join("sections/chapter.tex");
-        fs::write(&main, "\\documentclass{article}\n\\begin{document}\n\\input{sections/chapter}\n\\bibliographystyle{plain}\n\\bibliography{references}\n\\end{document}\n").unwrap();
+        // navigate_with_mouse clicks a fixed screen point that must stay on blank
+        // paper; pin the page size so the TeX installation's default (A4 or
+        // letter) cannot move the bibliography under it.
+        fs::write(&main, "\\documentclass{article}\n\\pdfpagewidth=8.5in\n\\pdfpageheight=11in\n\\begin{document}\n\\input{sections/chapter}\n\\bibliographystyle{plain}\n\\bibliography{references}\n\\end{document}\n").unwrap();
         fs::write(&chapter, "\\section{Navigation}\nThis sentence lives in the included chapter.\n\nA separate paragraph cites Knuth~\\cite{knuth}.\n").unwrap();
         fs::write(dir.join("references.bib"), "@book{knuth, author={Donald Knuth}, title={The TeXbook}, year={1984}, publisher={Addison-Wesley}}\n").unwrap();
         let ctx = egui::Context::default();
