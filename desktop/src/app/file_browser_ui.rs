@@ -54,6 +54,7 @@ impl App {
             )
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.;
+                let font_size = theme::browser_font(self.settings.editor.font_size);
                 let (rect, header) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), 32.),
                     egui::Sense::click(),
@@ -62,14 +63,14 @@ impl App {
                     rect.left_center() + egui::vec2(8., 0.),
                     egui::Align2::LEFT_CENTER,
                     "PROJECT",
-                    FontId::proportional(10.),
+                    FontId::proportional(font_size - 3.),
                     theme::of(ui).muted,
                 );
                 ui.painter().text(
                     rect.right_center() - egui::vec2(8., 0.),
                     egui::Align2::RIGHT_CENTER,
                     theme::key_label(&self.settings.keybindings.hint(Action::ProjectFiles)),
-                    FontId::proportional(10.),
+                    FontId::proportional(font_size - 3.),
                     theme::of(ui).muted,
                 );
                 header.context_menu(|ui| {
@@ -102,7 +103,7 @@ impl App {
                 if self.browser.tree.incomplete {
                     ui.weak("Some files are unavailable or the scan limit was reached.");
                 }
-                let row_height = theme::ROW_HEIGHT;
+                let row_height = theme::browser_row_height(font_size);
                 let mut scroll = egui::ScrollArea::vertical()
                     .id_salt("project-files-scroll")
                     .auto_shrink([false, false]);
@@ -212,7 +213,7 @@ impl App {
                                 egui::pos2(right, rect.center().y),
                                 egui::Align2::RIGHT_CENTER,
                                 "•",
-                                FontId::proportional(13.),
+                                FontId::proportional(font_size),
                                 p.accent,
                             );
                             right = dot.left() - 6.;
@@ -227,7 +228,7 @@ impl App {
                         };
                         let mut job = egui::text::LayoutJob::simple_singleline(
                             entry.name.clone(),
-                            FontId::proportional(13.),
+                            FontId::proportional(font_size),
                             color,
                         );
                         job.wrap =
@@ -368,6 +369,16 @@ mod tests {
         assert!(app.browser.open);
         frame(&mut app, vec![]);
         let output = frame(&mut app, vec![]);
+        assert!(
+            !output
+                .shapes
+                .iter()
+                .any(|s| text_position(&s.shape, "introduction.tex").is_some()),
+            "folders are folded when the browser opens"
+        );
+        click(&mut app, locate(&output, "sections"));
+        frame(&mut app, vec![]);
+        let output = frame(&mut app, vec![]);
         click(&mut app, locate(&output, "introduction.tex"));
         assert_eq!(
             app.tabs[app.active].doc.path,
@@ -464,6 +475,16 @@ mod tests {
             assert_eq!(text_color("supplement.tex"), p.text, "{mode} source row");
             assert_eq!(text_color("sections"), p.secondary, "{mode} folder row");
             assert_eq!(text_color("PROJECT"), p.muted, "{mode} header");
+            let size = shapes
+                .iter()
+                .find_map(|s| match s {
+                    egui::epaint::Shape::Text(t) if t.galley.job.text == "supplement.tex" => {
+                        Some(t.galley.job.sections[0].format.font_id.size)
+                    }
+                    _ => None,
+                })
+                .unwrap();
+            assert_eq!(size, 14., "one point below the default editor size");
             let fills: Vec<_> = shapes
                 .iter()
                 .filter_map(|s| match s {
@@ -488,6 +509,79 @@ mod tests {
             drop(app);
             fs::remove_dir_all(dir).unwrap();
         }
+    }
+
+    #[test]
+    fn browser_text_and_rows_scale_with_the_editor_font_size() {
+        fn collect(shape: &egui::epaint::Shape, out: &mut Vec<egui::epaint::Shape>) {
+            match shape {
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                other => out.push(other.clone()),
+            }
+        }
+        let mut measured = vec![];
+        for editor in [15., 20.] {
+            let dir = std::env::temp_dir().join(format!(
+                "folio-browser-scale-{editor}-{}",
+                std::process::id()
+            ));
+            Project::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+            let ctx = egui::Context::default();
+            let settings = Settings::parse(&format!("[editor]\nfont_size={editor}")).unwrap();
+            let mut app = App::with_settings(ctx.clone(), Some(dir.clone()), Arc::new(settings));
+            super::super::tests::settle(&mut app, &ctx, |a| !a.scanning);
+            app.browser.open = true;
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1000., 700.),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| app.workspace_ui(ctx),
+                ));
+            }
+            let mut shapes = Vec::new();
+            for clipped in &output.unwrap().shapes {
+                collect(&clipped.shape, &mut shapes);
+            }
+            let row = |name: &str| {
+                shapes
+                    .iter()
+                    .find_map(|s| match s {
+                        egui::epaint::Shape::Text(t) if t.galley.job.text == name => Some((
+                            t.galley.job.sections[0].format.font_id.size,
+                            t.pos.y + t.galley.size().y / 2.,
+                        )),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{name} is missing"))
+            };
+            let (size, first) = row("references.bib");
+            let (_, second) = row("supplement.tex");
+            assert_eq!(size, theme::browser_font(editor));
+            assert_eq!(size, editor - 1.);
+            measured.push((size, (second - first).abs()));
+            drop(app);
+            fs::remove_dir_all(dir).unwrap();
+        }
+        assert!(
+            measured[1].0 > measured[0].0,
+            "a larger editor font enlarges the names"
+        );
+        assert!(
+            measured[1].1 > measured[0].1,
+            "rows grow with their text: {measured:?}"
+        );
+        assert_eq!(
+            theme::browser_font(8.),
+            11.,
+            "names stay legible at the smallest editor size"
+        );
+        assert_eq!(theme::browser_font(48.), 28., "and bounded at the largest");
     }
 
     #[test]

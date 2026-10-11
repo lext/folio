@@ -124,7 +124,8 @@ pub struct Browser {
     pub open: bool,
     directory: Option<PathBuf>,
     pub tree: Tree,
-    collapsed: HashSet<PathBuf>,
+    /// Folders are folded until opened by a click or to show the active file.
+    expanded: HashSet<PathBuf>,
     pub visible: Vec<usize>,
     pub scroll_to: Option<PathBuf>,
     /// Rows painted last frame, so revealing an already visible file does not scroll.
@@ -145,11 +146,16 @@ impl Browser {
         if self.tree == tree {
             return;
         }
-        self.collapsed.retain(|path| {
+        self.expanded.retain(|path| {
             tree.entries
                 .iter()
                 .any(|e| &e.path == path && e.kind == Kind::Directory)
         });
+        // A file revealed before its project was listed still needs its folders.
+        if let Some(path) = &self.scroll_to {
+            self.expanded
+                .extend(path.ancestors().skip(1).map(Path::to_owned));
+        }
         self.tree = tree;
         self.rebuild_rows();
     }
@@ -157,22 +163,22 @@ impl Browser {
         self.directory = None;
         self.tree = Tree::default();
         self.visible.clear();
-        self.collapsed.clear();
+        self.expanded.clear();
         self.scroll_to = None;
     }
     pub fn expanded(&self, path: &Path) -> bool {
-        !self.collapsed.contains(path)
+        self.expanded.contains(path)
     }
     pub fn toggle_folder(&mut self, path: &Path) {
-        if !self.collapsed.remove(path) {
-            self.collapsed.insert(path.to_owned());
+        if !self.expanded.remove(path) {
+            self.expanded.insert(path.to_owned());
         }
         self.rebuild_rows();
     }
     pub fn reveal(&mut self, path: &Path) {
         let mut changed = false;
         for parent in path.ancestors().skip(1) {
-            changed |= self.collapsed.remove(parent);
+            changed |= self.expanded.insert(parent.to_owned());
         }
         if changed {
             self.rebuild_rows();
@@ -188,7 +194,7 @@ impl Browser {
             }
             hidden_below = None;
             self.visible.push(index);
-            if entry.kind == Kind::Directory && self.collapsed.contains(&entry.path) {
+            if entry.kind == Kind::Directory && !self.expanded.contains(&entry.path) {
                 hidden_below = Some(entry.depth);
             }
         }
@@ -263,29 +269,67 @@ mod tests {
     }
 
     #[test]
-    fn expansion_survives_refresh_reveals_active_files_and_resets_for_new_projects() {
+    fn folders_start_folded_and_open_by_click_or_to_reveal_the_active_file() {
         let dir =
             std::env::temp_dir().join(format!("folio-browser-expansion-{}", std::process::id()));
         fs::create_dir_all(dir.join("sections/nested")).unwrap();
+        fs::create_dir_all(dir.join("figures")).unwrap();
         let file = dir.join("sections/nested/chapter.tex");
         fs::write(&file, "chapter").unwrap();
+        fs::write(dir.join("figures/plot.pdf"), "").unwrap();
+        fs::write(dir.join("main.tex"), "main").unwrap();
+        let names = |browser: &Browser| -> Vec<String> {
+            browser
+                .visible
+                .iter()
+                .map(|&i| browser.tree.entries[i].name.clone())
+                .collect()
+        };
         let mut browser = Browser::default();
         browser.replace(dir.clone(), scan(&dir));
+        assert_eq!(
+            names(&browser),
+            ["figures", "sections", "main.tex"],
+            "every folder starts folded"
+        );
         browser.toggle_folder(&dir.join("sections"));
-        assert_eq!(browser.visible.len(), 1);
+        assert_eq!(
+            names(&browser),
+            ["figures", "sections", "nested", "main.tex"],
+            "opening a folder does not open the folders inside it"
+        );
         fs::write(dir.join("sections/added.tex"), "new").unwrap();
         browser.replace(dir.clone(), scan(&dir));
         assert_eq!(
-            browser.visible.len(),
-            1,
-            "refresh must not reopen collapsed folders"
+            names(&browser),
+            ["figures", "sections", "nested", "added.tex", "main.tex"],
+            "a refresh keeps each folder as the user left it"
         );
-        browser.reveal(&file);
-        assert_eq!(browser.visible.len(), 4);
         browser.toggle_folder(&dir.join("sections"));
+        assert_eq!(names(&browser), ["figures", "sections", "main.tex"]);
+        browser.reveal(&file);
+        assert_eq!(
+            names(&browser),
+            [
+                "figures",
+                "sections",
+                "nested",
+                "chapter.tex",
+                "added.tex",
+                "main.tex"
+            ],
+            "the active file is shown; unrelated folders stay folded"
+        );
         browser.replace(dir.join("different"), Tree::default());
         assert!(browser.visible.is_empty());
-        assert!(browser.collapsed.is_empty());
+        assert!(browser.expanded.is_empty());
+
+        // Revealing a file before its project is listed must still show it.
+        let mut browser = Browser::default();
+        browser.reveal(&file);
+        browser.replace(dir.clone(), scan(&dir));
+        assert!(names(&browser).contains(&"chapter.tex".to_owned()));
+        assert!(!names(&browser).contains(&"plot.pdf".to_owned()));
         fs::remove_dir_all(dir).unwrap();
     }
 

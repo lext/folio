@@ -1972,7 +1972,10 @@ mod tests {
                 );
             }
             if browser {
-                assert!(labels.iter().any(|s| s.contains("introduction.tex")));
+                // Folders start folded: the folder is listed, its files are not.
+                assert!(labels.iter().any(|s| s == "sections"));
+                assert!(labels.iter().any(|s| s == "references.bib"));
+                assert!(!labels.iter().any(|s| s.contains("introduction.tex")));
             }
         }
         drop(app);

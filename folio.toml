@@ -76,7 +76,7 @@ timeout_seconds = 120 # 0 disables the time limit; cancellation remains availabl
 
 [editor]
 line_numbers = true
-font_size = 15
+font_size = 15 # file browser names follow this, one point smaller
 auto_complete = true
 
 [theme]

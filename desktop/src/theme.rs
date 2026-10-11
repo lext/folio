@@ -99,7 +99,16 @@ pub fn tint(color: Color32, alpha: u8) -> Color32 {
     Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
 }
 
-pub const ROW_HEIGHT: f32 = 28.;
+/// File browser names follow `[editor] font_size`, one point smaller, so the
+/// tree and the text beside it grow and shrink together.
+pub fn browser_font(editor_size: f32) -> f32 {
+    (editor_size - 1.).clamp(11., 28.)
+}
+
+/// Browser rows keep the same proportions at every font size.
+pub fn browser_row_height(font_size: f32) -> f32 {
+    (font_size * 2.).round()
+}
 
 pub fn line_height(font_size: f32) -> f32 {
     (font_size * 1.55).round()

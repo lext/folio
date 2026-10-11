@@ -10,7 +10,9 @@ project folder. Both actions are also on the welcome screen and in Commands
 `folio.project.toml`, not an individual source file.
 Press **Cmd/Ctrl+B** to toggle the project browser, or right-click the editor and
 choose **Project files** from Commands.
-Click a folder to expand/collapse it and a source file to open it. The active file
+Names in the browser follow `[editor] font_size`, one point smaller, and rows scale
+with them. Folders start folded. Click a folder to expand/collapse it and a source file to
+open it; the folders containing the active file open automatically. The active file
 is highlighted; **•** marks unsaved changes. Figure assets open in your system
 viewer. Right-click a file to copy its relative path, add a project file or import
 a figure. Right-click the browser heading for those project actions and its hide
