@@ -206,10 +206,15 @@ impl Project {
             if depth == 0 && relative == Path::new(".git") {
                 continue;
             }
-            if entry.file_name() == ".DS_Store" {
+            let kind = entry.file_type()?;
+            // Tooling, editors and the OS leave files a paper never uses. They
+            // are not project files: skip them instead of blocking the build.
+            if ignored(&entry.file_name().to_string_lossy(), kind.is_dir())
+                && !allowed_file(relative)
+                && !(depth == 0 && relative == Path::new(".folio"))
+            {
                 continue;
             }
-            let kind = entry.file_type()?;
             if kind.is_symlink() {
                 return Err(invalid(format!(
                     "{} is a symlink; projects must contain their own sources and assets",
@@ -296,6 +301,18 @@ impl Project {
         }
         Ok(path)
     }
+}
+/// Hidden entries (`.github/`, `.gitattributes`, a temporary file from an
+/// interrupted save) and editor backups or OS metadata.
+fn ignored(name: &str, directory: bool) -> bool {
+    name.starts_with('.')
+        || (!directory
+            && (name.ends_with('~')
+                || (name.starts_with('#') && name.ends_with('#'))
+                || [".swp", ".swo", ".bak", ".orig", ".tmp"]
+                    .iter()
+                    .any(|suffix| name.ends_with(suffix))
+                || ["Thumbs.db", "desktop.ini", "Icon\r"].contains(&name)))
 }
 fn allowed_file(path: &Path) -> bool {
     let extension = path
