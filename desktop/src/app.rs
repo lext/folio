@@ -815,14 +815,15 @@ impl App {
         let mut edited = false;
         let mut go_requested = false;
         let navigation_pointer = self.go_gesture.modified_pointer(ui.ctx());
-        egui::ScrollArea::both()
+        // Long lines wrap, so the source scrolls vertically only and can
+        // never slide under the line numbers.
+        egui::ScrollArea::vertical()
             .id_salt(("source-scroll", &tab.doc.path))
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 ui.horizontal_top(|ui| {
                     let font = FontId::monospace(self.settings.editor.font_size);
                     let height = theme::line_height(font.size);
-                    let lines = tab.line_count;
                     let (gutter, _) = ui.allocate_exact_size(
                         egui::vec2(
                             if self.settings.editor.line_numbers {
@@ -831,14 +832,10 @@ impl App {
                             } else {
                                 8.
                             },
-                            height * lines as f32 + 8.,
+                            height,
                         ),
                         egui::Sense::hover(),
                     );
-                    let clip = ui.clip_rect();
-                    let first = ((clip.top() - gutter.top() - 4.) / height).max(0.) as usize;
-                    let last =
-                        (((clip.bottom() - gutter.top()) / height).ceil() as usize).min(lines);
                     let mut layouter = |ui: &egui::Ui, text: &dyn egui::TextBuffer, width| {
                         tab.language.layout(ui, text.as_str(), width)
                     };
@@ -853,6 +850,21 @@ impl App {
                         .lock_focus(true)
                         .layouter(&mut layouter)
                         .show(ui);
+                    // A logical line may span several wrapped rows. `tops` holds
+                    // the screen y of each line's first row, plus the text bottom.
+                    let mut tops = Vec::with_capacity(tab.line_count + 1);
+                    let mut starts_line = true;
+                    for row in &output.galley.rows {
+                        if starts_line {
+                            tops.push(output.galley_pos.y + row.pos.y);
+                        }
+                        starts_line = row.ends_with_newline;
+                    }
+                    let lines = tops.len();
+                    tops.push(output.galley_pos.y + output.galley.size().y);
+                    let clip = ui.clip_rect();
+                    let first = tops[1..].partition_point(|bottom| *bottom <= clip.top());
+                    let last = tops[..lines].partition_point(|top| *top < clip.bottom());
                     for line in (first..last).filter(|_| self.settings.editor.line_numbers) {
                         let job = egui::text::LayoutJob::single_section(
                             (line + 1).to_string(),
@@ -865,17 +877,12 @@ impl App {
                         );
                         let number = ui.fonts_mut(|f| f.layout_job(job));
                         ui.painter().galley(
-                            egui::pos2(
-                                gutter.right() - 8. - number.size().x,
-                                output.galley_pos.y + line as f32 * height,
-                            ),
+                            egui::pos2(gutter.right() - 8. - number.size().x, tops[line]),
                             number,
                             theme::of(ui).muted,
                         );
                     }
-                    let aligned_gutter =
-                        gutter.translate(egui::vec2(0., output.galley_pos.y - 4. - gutter.top()));
-                    self.git.gutter(ui, aligned_gutter, height, first, last);
+                    self.git.gutter(ui, gutter.right(), &tops, first, last);
                     // A click in the file browser is outside this TextEdit.
                     // Honor the explicit open request after it processes that
                     // click, so the very next keystroke reaches the new buffer.
@@ -1709,6 +1716,70 @@ mod tests {
                 (source_y - number_y).abs() < 0.5,
                 "line {}: source {source_y}, gutter {number_y}",
                 line + 1
+            );
+        }
+        drop(app);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn long_source_lines_wrap_beside_a_pinned_gutter_that_numbers_logical_lines() {
+        let dir = std::env::temp_dir().join(format!("folio-soft-wrap-{}", std::process::id()));
+        ManagedProject::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+        let text = format!("Short line\n{}\nLast line", "wrapped words ".repeat(60));
+        fs::write(dir.join("main.tex"), &text).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000., 700.));
+        let mut shapes = Vec::new();
+        for _ in 0..3 {
+            shapes = ctx
+                .run(
+                    egui::RawInput {
+                        screen_rect: Some(screen),
+                        ..Default::default()
+                    },
+                    |ctx| app.workspace_ui(ctx),
+                )
+                .shapes;
+        }
+        let texts: Vec<_> = shapes
+            .iter()
+            .filter_map(|s| match &s.shape {
+                egui::Shape::Text(t) => Some(t),
+                _ => None,
+            })
+            .collect();
+        let source = texts.iter().find(|t| t.galley.job.text == text).unwrap();
+        let rows = &source.galley.rows;
+        assert!(rows.len() > 3, "the long line must wrap into several rows");
+        assert!(
+            source.pos.x + source.galley.size().x <= screen.right(),
+            "wrapped text stays inside the window"
+        );
+        let number = |n: usize| {
+            texts
+                .iter()
+                .find(|t| t.galley.job.text == n.to_string())
+                .unwrap_or_else(|| panic!("line number {n} is missing"))
+        };
+        assert!(
+            !texts
+                .iter()
+                .any(|t| t.galley.job.text == "4" && t.pos.x < source.pos.x),
+            "wrapped rows must not be numbered as extra lines"
+        );
+        // Line 3 starts on the row after the wrapped line's last row.
+        let third = rows.iter().rposition(|r| r.ends_with_newline).unwrap() + 1;
+        for (n, row) in [(1, 0), (2, 1), (3, third)] {
+            let label = number(n);
+            assert!(
+                (label.pos.y - (source.pos.y + rows[row].pos.y)).abs() < 0.5,
+                "line {n} must sit beside its first row"
+            );
+            assert!(
+                label.pos.x + label.galley.size().x <= source.pos.x,
+                "line {n}: text must never be painted under the gutter"
             );
         }
         drop(app);

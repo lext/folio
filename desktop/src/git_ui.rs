@@ -209,41 +209,35 @@ impl Git {
     pub fn gutter(
         &mut self,
         ui: &mut egui::Ui,
-        gutter: egui::Rect,
-        height: f32,
+        right: f32,
+        tops: &[f32],
         first: usize,
         last: usize,
     ) {
+        // `tops[line]` is the screen y of a zero-based source line; one extra
+        // entry closes the last line. Wrapped lines are taller than one row.
+        let lines = tops.len().saturating_sub(1);
         let Some(comparison) = &self.comparison else {
             return;
         };
         for (i, hunk) in comparison.hunks.iter().enumerate() {
             let start = hunk.anchor_line() - 1;
             let end = start + hunk.new_count.max(1);
-            if end <= first || start >= last {
+            if end <= first || start >= last || start >= lines {
                 continue;
             }
+            let (from, to) = (start.max(first), end.min(last).min(lines));
             let deleted = hunk.kind() == ChangeKind::Deleted;
             let rect = egui::Rect::from_min_size(
                 egui::pos2(
-                    gutter.right() - 3.,
-                    gutter.top()
-                        + 4.
-                        + start.max(first) as f32 * height
-                        + if deleted && hunk.new_start > 0 {
-                            height - 3.
-                        } else {
-                            0.
-                        },
-                ),
-                egui::vec2(
-                    3.,
-                    if deleted {
-                        3.
+                    right - 3.,
+                    if deleted && hunk.new_start > 0 {
+                        tops[from + 1] - 3.
                     } else {
-                        (end.min(last) - start.max(first)) as f32 * height
+                        tops[from]
                     },
                 ),
+                egui::vec2(3., if deleted { 3. } else { tops[to] - tops[from] }),
             );
             let color = match hunk.kind() {
                 ChangeKind::Added => crate::theme::of(ui).added,
