@@ -41,10 +41,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # One packaged archive per OS and CPU: Linux x86_64/arm64 and macOS
-        # Apple silicon/Intel. Linux is pinned so the archives keep one glibc
-        # baseline when ubuntu-latest moves on.
-        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+        # One packaged archive each for Linux x86_64 and macOS Apple silicon.
+        # Linux is pinned so the archive keeps one glibc baseline when
+        # ubuntu-latest moves on.
+        os: [ubuntu-24.04, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
