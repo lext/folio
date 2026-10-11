@@ -330,6 +330,7 @@ pub struct Settings {
     pub mouse: MouseBindings,
     pub editor: EditorSettings,
     pub preview: PreviewSettings,
+    pub theme: crate::theme::Mode,
     pub engine: Engine,
     pub build_timeout: std::time::Duration,
     pub window_size: [f32; 2],
@@ -484,6 +485,12 @@ impl Settings {
                 width_fraction: number("preview", "width_fraction", 0.1, 1.)?,
                 zoom: number("preview", "zoom", 0.25, 4.)?,
                 cache_mib,
+            },
+            theme: match string(&doc["theme"]["mode"], "theme.mode")? {
+                "dark" => crate::theme::Mode::Dark,
+                "light" => crate::theme::Mode::Light,
+                "system" => crate::theme::Mode::System,
+                _ => return Err("theme.mode: expected dark, light or system".into()),
             },
             engine,
             window_size: [
@@ -906,6 +913,7 @@ mod tests {
                 "preview.fit_on_switch",
             ),
             ("[build]\nengine='tectonic'", "build.engine"),
+            ("[theme]\nmode='sepia'", "theme.mode"),
             ("[window]\nwidth=0", "window.width"),
         ] {
             let error = Settings::parse(source).unwrap_err();
@@ -914,6 +922,20 @@ mod tests {
         assert!(Settings::parse("[editor]\nfont_size=17\nfont_size=18").is_err());
     }
 
+    #[test]
+    fn theme_mode_defaults_to_dark_and_accepts_light_or_system() {
+        use crate::theme::Mode;
+        assert_eq!(Settings::default().theme, Mode::Dark);
+        for (name, mode) in [
+            ("dark", Mode::Dark),
+            ("light", Mode::Light),
+            ("system", Mode::System),
+        ] {
+            let settings = Settings::parse(&format!("[theme]\nmode='{name}'")).unwrap();
+            assert_eq!(settings.theme, mode);
+        }
+        assert!(Settings::parse("[theme]\naccent='#fff'").is_err());
+    }
     #[test]
     fn preview_accepts_explicit_switch_fitting_policies() {
         assert_eq!(

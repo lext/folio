@@ -44,7 +44,7 @@ fn frame(
         .shapes
         .into_iter()
         .filter_map(|shape| match shape.shape {
-            egui::Shape::Rect(rect) if rect.fill == Color32::WHITE => {
+            egui::Shape::Rect(rect) if rect.fill == egui::Color32::WHITE => {
                 Some((rect.rect, shape.clip_rect))
             }
             _ => None,

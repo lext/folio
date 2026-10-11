@@ -89,7 +89,7 @@ impl Launcher {
                 egui::Align2::CENTER_TOP,
                 egui::vec2(0., ctx.content_rect().height() * 0.16),
             ))
-            .frame(theme::popup().inner_margin(10.))
+            .frame(theme::popup(&ctx.style().visuals).inner_margin(10.))
             .backdrop_color(egui::Color32::from_black_alpha(100))
             .show(ctx, |ui| {
                 ui.set_width(600_f32.min(ctx.content_rect().width() - 48.).max(240.));
@@ -98,17 +98,21 @@ impl Launcher {
                     .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(theme::caption(match self.mode {
-                                Mode::Surfaces => "SURFACES",
-                                Mode::Commands => "COMMANDS",
-                                Mode::Outline => "OUTLINE",
-                            }));
+                            ui.label(theme::caption(
+                                ui,
+                                match self.mode {
+                                    Mode::Surfaces => "SURFACES",
+                                    Mode::Commands => "COMMANDS",
+                                    Mode::Outline => "OUTLINE",
+                                },
+                            ));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.label(theme::caption(theme::key_label(
-                                        &keys.hint(Action::LauncherDismiss),
-                                    )));
+                                    ui.label(theme::caption(
+                                        ui,
+                                        theme::key_label(&keys.hint(Action::LauncherDismiss)),
+                                    ));
                                 },
                             );
                         });
@@ -166,7 +170,9 @@ impl Launcher {
                 }
                 if self.matches.is_empty() {
                     ui.add_space(12.);
-                    ui.label(egui::RichText::new("No matching results").color(theme::SECONDARY));
+                    ui.label(
+                        egui::RichText::new("No matching results").color(theme::of(ui).secondary),
+                    );
                     ui.add_space(12.);
                 } else {
                     scroll.show_rows(ui, 44., self.matches.len(), |ui, rows| {
@@ -197,22 +203,28 @@ impl Launcher {
                     .inner_margin(egui::Margin::symmetric(12, 8))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(theme::caption(format!(
-                                "{}  navigate",
-                                theme::key_label(&keys.hint(Action::LauncherNext))
-                            )));
+                            ui.label(theme::caption(
+                                ui,
+                                format!(
+                                    "{}  navigate",
+                                    theme::key_label(&keys.hint(Action::LauncherNext))
+                                ),
+                            ));
                             ui.add_space(10.);
-                            ui.label(theme::caption(format!(
-                                "{}  open",
-                                theme::key_label(&keys.hint(Action::LauncherAccept))
-                            )));
+                            ui.label(theme::caption(
+                                ui,
+                                format!(
+                                    "{}  open",
+                                    theme::key_label(&keys.hint(Action::LauncherAccept))
+                                ),
+                            ));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
-                                    ui.label(theme::caption(format!(
-                                        "{} results",
-                                        self.matches.len()
-                                    )));
+                                    ui.label(theme::caption(
+                                        ui,
+                                        format!("{} results", self.matches.len()),
+                                    ));
                                 },
                             );
                         });
