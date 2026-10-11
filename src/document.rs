@@ -34,6 +34,16 @@ impl Document {
         self.saved.clone_from(&self.text);
         Ok(())
     }
+    /// Adopt `disk` when this buffer has no unsaved edits and the file changed
+    /// underneath it. Returns whether the text was replaced.
+    pub fn adopt_disk(&mut self, disk: &str) -> bool {
+        if self.is_dirty() || self.saved == disk {
+            return false;
+        }
+        self.saved = disk.to_owned();
+        self.text.clone_from(&self.saved);
+        true
+    }
     pub fn check_disk(&self) -> io::Result<()> {
         // Read even when clean: a missing/changed file needs a conscious reload.
         if read_utf8(&self.path)? != self.saved {
