@@ -80,7 +80,9 @@ changes. Keep generated output, runtime downloads, build caches and personal
 projects out of commits. PDF figures are source assets and are not globally
 ignored. Preserve the existing MIT license and third-party notices.
 
-CI runs the same scripts on macOS and Linux. Its packaged archives retain
+CI runs the same scripts on macOS (Apple silicon and Intel) and Linux (x86_64
+and arm64). Each Desktop job uploads its packaged archive as a `folio-<OS>-<CPU>`
+artifact on the run's summary page, kept for 14 days. The archives retain
 executable modes and macOS symlinks; [GitHub artifact transport](https://github.com/actions/upload-artifact#permission-loss)
 does not preserve raw file permissions. A green macOS run does not establish
 Linux runtime behavior.

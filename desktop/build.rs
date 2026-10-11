@@ -6,5 +6,9 @@ fn main() {
         .file("native/latex_scanner.c")
         .std("c11")
         .warnings(true)
+        // tree-sitter-latex's parser references the scanner but is linked after
+        // it; GNU ld (Linux arm64) drops archive members nothing has asked for
+        // yet. Keep the whole archive so link order does not matter.
+        .link_lib_modifier("+whole-archive")
         .compile("folio_latex_scanner");
 }
