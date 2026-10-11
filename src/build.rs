@@ -190,6 +190,9 @@ fn compile_with_program(
         "PATH",
         std::env::join_paths(paths).map_err(io::Error::other)?,
     );
+    // TeX wraps log lines at 79 columns by default, which splits long
+    // file:line:error records and hides them from the diagnostics parser.
+    cmd.env("max_print_line", "10000");
     cmd.current_dir(config.root.parent().unwrap())
         .args(config.arguments())
         .stdin(Stdio::null())
@@ -496,6 +499,15 @@ mod tests {
             "auxiliary files must survive: {}",
             retried.log
         );
+    }
+    #[test]
+    fn child_tex_processes_do_not_wrap_log_lines() {
+        let fixture = Fixture::new();
+        let config = fixture.config();
+        let tool = fixture.program("printf '%s' \"$max_print_line\"\nprintf PDF > .folio/main.pdf");
+        let result =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(result.log.starts_with("10000"), "{}", result.log);
     }
     #[test]
     fn cancellation_still_works_with_timeout_disabled_and_an_uncooperative_child() {
