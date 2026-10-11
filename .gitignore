@@ -1,0 +1,33 @@
+# Rust and downloaded/native build products.
+target/
+/.cargo-local/
+/runtime/
+/dist/
+
+# Local scratch project; keep it on disk, outside the shared examples.
+/examples/Test/
+
+# TeX build output. PDF figures are source assets and remain trackable.
+**/.folio/
+*.aux
+*.log
+*.fdb_latexmk
+*.fls
+*.synctex.gz
+*.synctex
+*.toc
+*.out
+*.bcf
+*.run.xml
+*.blg
+
+# Machine-local and editor files.
+.DS_Store
+.env
+.env.*
+!.env.example
+*.swp
+*.swo
+*~
+__pycache__/
+*.pyc

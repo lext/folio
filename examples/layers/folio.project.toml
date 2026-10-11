@@ -1,0 +1,9 @@
+schema = 1
+
+[project]
+name = "Source and PDF"
+main = "main.tex"
+
+[build]
+engine = "pdflatex"
+timeout_seconds = 120

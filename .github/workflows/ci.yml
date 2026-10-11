@@ -1,0 +1,83 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+env:
+  CARGO_HOME: ${{ github.workspace }}/.cargo-local
+  CARGO_TERM_COLOR: always
+jobs:
+  core:
+    name: Core (${{ matrix.os }})
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: actions/cache@v4
+        with:
+          path: .cargo-local/registry
+          key: core-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock') }}
+      - name: Fetch locked dependencies
+        run: cargo fetch --locked
+      - name: Repository tooling regressions
+        run: python3 -m unittest discover -s scripts/tests -v
+      - name: Core checks (no TeX required)
+        run: scripts/check.sh
+  desktop:
+    name: Desktop and TeX (${{ matrix.os }})
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - name: Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libegl1-mesa-dev latexmk texlive-latex-base texlive-latex-recommended texlive-xetex texlive-extra-utils texlive-bibtex-extra biber
+      - name: macOS TeX
+        if: runner.os == 'macOS'
+        run: |
+          brew install --cask basictex
+          echo /Library/TeX/texbin >> "$GITHUB_PATH"
+          sudo /Library/TeX/texbin/tlmgr install latexmk fontspec latexpand biblatex biber
+      - uses: actions/cache@v4
+        with:
+          path: .cargo-local/registry
+          key: desktop-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Cargo.lock', 'desktop/Cargo.lock') }}
+      - name: Fetch locked dependencies and PDFium
+        run: |
+          cargo fetch --locked
+          cargo fetch --locked --manifest-path desktop/Cargo.toml
+          scripts/setup-pdfium.sh
+      - name: Format, lint, unit and real TeX/PDF tests
+        run: scripts/check.sh --desktop --tex
+      - name: Package native application
+        run: scripts/package.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: folio-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            dist/folio-*.zip
+            dist/folio-*.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14

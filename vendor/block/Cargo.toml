@@ -1,0 +1,15 @@
+[package]
+name = "block"
+version = "0.1.6"
+edition = "2015"
+authors = ["Steven Sheldon"]
+description = "Rust interface for Apple's C language extension of blocks."
+repository = "https://github.com/SSheldon/rust-block"
+readme = "README.md"
+license = "MIT"
+publish = false
+
+[lib]
+# The published upstream crate omits its objc_test_utils helper. Preserve its
+# source tests, but run our self-contained native runtime integration tests.
+test = false

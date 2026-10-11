@@ -1,0 +1,33 @@
+\documentclass[11pt]{article}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
+\usepackage[margin=1in]{geometry}
+\begin{document}
+\newcount\folioPage
+\folioPage=1
+\loop
+\section*{A local reading test: page \the\folioPage}
+This is a repeatable scrolling and zooming fixture. The PDF is rendered locally,
+with selectable text and source navigation. Scrolling should follow the finger
+immediately, even while the project index is refreshed in the background.
+\par\bigskip
+A fast view also preserves the point under the pointer while magnifying. The
+pages below contain the same text and mathematics so every viewport has a
+comparable rendering cost.
+\[ \int_0^1 x^n\,dx = \frac{1}{n+1}, \qquad e^{i\pi}+1=0. \]
+\bigskip
+\begin{picture}(320,100)
+\put(0,0){\line(1,0){300}}\put(0,0){\line(0,1){95}}
+\put(20,10){\line(1,1){80}}\put(100,90){\line(2,-1){160}}
+\put(20,80){\makebox(0,0)[l]{Vector graphics and searchable text}}
+\end{picture}
+\par\bigskip
+The first line of a new page should be visible as soon as it enters the screen.
+Existing page textures remain visible while sharper pixels are prepared.
+\vfill
+Page \the\folioPage\ of 120.
+\ifnum\folioPage<120
+\advance\folioPage by 1
+\newpage
+\repeat
+\end{document}

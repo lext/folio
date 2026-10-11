@@ -1,0 +1,9 @@
+schema = 1
+
+[project]
+name = "120-page reading test"
+main = "main.tex"
+
+[build]
+engine = "pdflatex"
+timeout_seconds = 120

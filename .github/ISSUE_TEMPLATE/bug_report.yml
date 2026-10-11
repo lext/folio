@@ -1,0 +1,29 @@
+name: Bug report
+description: Report a reproducible problem in Folio.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What happened?
+      description: Include what you expected to happen.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: A small LaTeX project or relevant settings can help reproduce the issue.
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Folio version, macOS/Linux version, CPU architecture, and TeX distribution.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Logs or screenshots
+      description: Include relevant compiler output or a screenshot when useful; omit private document content.

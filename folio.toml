@@ -1,0 +1,93 @@
+# Folio settings. Restart the app after editing.
+# Lookup: beside the executable, then $HOME/.config/folio/folio.toml.
+# Missing options inherit these defaults. [] disables a keyboard shortcut.
+# Primary = Command on macOS, Control on Linux. Ctrl always means Control.
+# Modifiers: Primary, Cmd (macOS), Ctrl, Alt, Shift. Keys: A-Z, F1-F35,
+# Enter, Escape, Space, Tab, ArrowUp/Down/Left/Right, Home, End, PageUp/Down,
+# Backspace, Delete, Plus, Minus, etc. Multiple alternatives are allowed.
+
+[keybindings]
+save = ["Primary+S"]
+recompile = ["Primary+Enter"]
+find = ["Primary+F"]
+go = ["Primary+G"]
+complete = ["Ctrl+Space"]
+completion_next = ["ArrowDown", "Tab"]
+completion_previous = ["ArrowUp", "Shift+Tab"]
+completion_accept = ["Enter"]
+completion_dismiss = ["Escape"]
+find_next = ["Enter"]
+find_previous = ["Shift+Enter"]
+# Prose motions in the focused editor; repeat to reach the next/previous boundary.
+paragraph_down = ["Primary+D"]
+paragraph_up = ["Primary+U"]
+sentence_next = ["Primary+J"]
+sentence_previous = ["Primary+K"]
+ui_zoom_in = ["Primary+Plus", "Primary+Shift+Plus", "Primary+Equals"]
+ui_zoom_out = ["Primary+Minus"]
+ui_zoom_reset = ["Primary+0"]
+
+# Surface switching, launchers and commands (empty lists are palette-only).
+switcher = ["Primary+P"]
+commands = ["Primary+Shift+P"]
+project_files = ["Primary+B"]
+source = ["Primary+1"]
+preview = ["Primary+2"]
+next_surface = ["Ctrl+Tab"]
+previous_surface = ["Ctrl+Shift+Tab"]
+launcher_next = ["ArrowDown"]
+launcher_previous = ["ArrowUp"]
+launcher_accept = ["Enter"]
+launcher_dismiss = ["Escape"]
+dismiss = ["Escape"]
+show_log = ["Primary+Shift+L"]
+git = ["Primary+Shift+D"]
+outline = ["Primary+Shift+O"]
+# Project commands appear in the palette; assign shortcuts here if desired.
+new_project = ["Primary+N"]
+open_project = ["Primary+O"]
+project_settings = []
+validate_project = []
+export_project = []
+add_project_file = ["Primary+Shift+N"]
+import_figure = []
+cancel_build = []
+reload = []
+help = []
+pdf_zoom_in = []
+pdf_zoom_out = []
+pdf_fit = ["Space"]
+# Repeat the same chord within 350 ms; holding the key is not a double press.
+pdf_fit_page = ["Space Space"]
+pdf_next_page = ["PageDown"]
+pdf_previous_page = ["PageUp"]
+
+[mouse]
+# Click / DoubleClick use the left button; RightClick / RightDoubleClick
+# and MiddleClick / MiddleDoubleClick are also supported. "" disables go.
+go = "Primary+DoubleClick"
+zoom = ["Primary", "Ctrl"]
+horizontal_scroll = ["Shift"]
+
+[build]
+# Defaults for newly created projects. Existing projects use their manifest.
+engine = "pdflatex" # pdflatex, xelatex, lualatex
+timeout_seconds = 120 # 0 disables the time limit; cancellation remains available
+
+[editor]
+line_numbers = true
+font_size = 15
+auto_complete = true
+
+[preview]
+# On source -> PDF: fit width, fit the whole page, or keep the previous zoom.
+fit_on_switch = "width" # width, page, keep
+width_fraction = 0.9 # fraction of available canvas width; 0.1 through 1.0
+# Initial view for "keep"; the other policies refit on each source -> PDF switch.
+fit_width = true
+zoom = 1.0
+cache_mib = 96
+
+[window]
+width = 1440
+height = 940
