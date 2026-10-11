@@ -58,6 +58,16 @@ impl Tab {
         self.revision += 1;
         self.line_count = self.doc.text.bytes().filter(|b| *b == b'\n').count() + 1;
     }
+    fn adopt_disk(&mut self, disk: &str) -> bool {
+        let adopted = self.doc.adopt_disk(disk);
+        if adopted {
+            self.edited();
+            let length = self.doc.text.chars().count();
+            self.cursor = self.cursor.min(length);
+            self.selection = self.selection.start.min(length)..self.selection.end.min(length);
+        }
+        adopted
+    }
     fn refresh_index(&mut self) {
         if self.indexed_revision == Some(self.revision) {
             return;
@@ -319,6 +329,13 @@ impl App {
             .collect();
         self.disk_sources = snapshot.sources;
         self.disk_indexes = snapshot.indexes;
+        // Follow external edits (git pull, another editor) in buffers without
+        // unsaved changes. Edited buffers keep their text and conflict on save.
+        for tab in &mut self.tabs {
+            if let Some(disk) = self.disk_sources.get(&tab.doc.path) {
+                tab.adopt_disk(disk);
+            }
+        }
         if let Some(directory) = self.root.as_ref().and_then(|r| r.parent()) {
             self.browser.replace(directory.to_owned(), snapshot.tree);
         }
@@ -362,6 +379,18 @@ impl App {
         });
     }
     fn save_all(&mut self) -> bool {
+        // An unedited buffer cannot conflict: take the newer file instead of
+        // refusing to save, without waiting for the next background scan.
+        let mut reloaded = false;
+        for tab in self.tabs.iter_mut().filter(|tab| !tab.doc.is_dirty()) {
+            if let Ok(disk) = fs::read_to_string(&tab.doc.path) {
+                reloaded |= tab.adopt_disk(&disk);
+            }
+        }
+        if reloaded {
+            // The preview must be rebuilt from the text that was just loaded.
+            self.layers.edited();
+        }
         let mut errors: Vec<_> = self
             .tabs
             .iter()
@@ -2433,6 +2462,60 @@ mod tests {
         let items = &app.completion.as_ref().unwrap().suggestions.items;
         assert_eq!(items.len(), 1);
         assert!(items[0].detail.contains("Unsaved"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn unedited_buffers_follow_external_changes_instead_of_blocking_saves() {
+        let dir =
+            std::env::temp_dir().join(format!("folio external reload {}", std::process::id()));
+        ManagedProject::create(&dir, "Test paper", Engine::PdfLatex).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        let clean = dir.join("sections/clean.tex");
+        let edited = dir.join("sections/edited.tex");
+        for path in [&clean, &edited] {
+            fs::write(path, "saved").unwrap();
+            app.open_document(path.clone());
+        }
+        app.tabs[app.active].doc.text = "my edit".into();
+        app.tabs[app.active].cursor = 7;
+        settle(&mut app, &ctx, |a| !a.scanning);
+
+        // Save path: the clean buffer reloads at once and nothing is refused.
+        fs::write(&clean, "pulled").unwrap();
+        let revision = app.layers.revision;
+        assert!(app.save_all(), "{}", app.status);
+        let tab = |app: &App, name: &str| {
+            app.tabs
+                .iter()
+                .position(|t| t.doc.path.ends_with(name))
+                .unwrap()
+        };
+        let index = tab(&app, "clean.tex");
+        assert_eq!(app.tabs[index].doc.text, "pulled");
+        assert!(!app.tabs[index].doc.is_dirty());
+        assert_ne!(app.layers.revision, revision, "the preview must rebuild");
+        assert_eq!(fs::read_to_string(&edited).unwrap(), "my edit");
+
+        // Background path: a scan delivers the newer text without any save.
+        settle(&mut app, &ctx, |a| !a.scanning);
+        fs::write(&clean, "pulled\nagain").unwrap();
+        app.refresh_project();
+        settle(&mut app, &ctx, |a| !a.scanning);
+        assert_eq!(app.tabs[index].doc.text, "pulled\nagain");
+        assert_eq!(app.tabs[index].line_count, 2);
+
+        // An edited buffer is never replaced; it conflicts as before.
+        let index = tab(&app, "edited.tex");
+        app.tabs[index].doc.text = "second edit".into();
+        fs::write(&edited, "theirs").unwrap();
+        app.refresh_project();
+        settle(&mut app, &ctx, |a| !a.scanning);
+        assert_eq!(app.tabs[index].doc.text, "second edit");
+        assert!(!app.save_all());
+        assert_eq!(fs::read_to_string(&edited).unwrap(), "theirs");
+        settle(&mut app, &ctx, |a| !a.scanning);
+        drop(app);
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
