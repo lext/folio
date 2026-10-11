@@ -52,13 +52,16 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libegl1-mesa-dev latexmk texlive-latex-base texlive-latex-recommended texlive-xetex texlive-extra-utils texlive-bibtex-extra biber
+          sudo apt-get install -y pkg-config libxkbcommon-dev libwayland-dev libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libegl1-mesa-dev latexmk texlive-latex-base texlive-latex-recommended cm-super texlive-xetex texlive-extra-utils texlive-bibtex-extra biber
       - name: macOS TeX
         if: runner.os == 'macOS'
         run: |
           brew install --cask basictex
           echo /Library/TeX/texbin >> "$GITHUB_PATH"
-          sudo /Library/TeX/texbin/tlmgr install latexmk fontspec latexpand biblatex biber
+          # BasicTeX's bundled tlmgr refuses to install anything until it has
+          # caught up with the package repository.
+          sudo /Library/TeX/texbin/tlmgr update --self
+          sudo /Library/TeX/texbin/tlmgr install latexmk fontspec latexpand biblatex biber cm-super
       - uses: actions/cache@v4
         with:
           path: .cargo-local/registry
