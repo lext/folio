@@ -222,6 +222,10 @@ fn compile_with_program(
     let mut log = String::from_utf8_lossy(&fs::read(log_path)?).into_owned();
     if cancelled {
         log.push_str("\nBuild cancelled or timed out.\n");
+    } else {
+        // latexmk ran to completion, so its auxiliary files are consistent even
+        // when the document has an error. Only a killed run needs a clean retry.
+        fs::remove_file(&interrupted)?;
     }
     let diagnostics = parse_diagnostics(&log);
     let success = success && config.pdf_path().is_file();
@@ -240,9 +244,7 @@ fn compile_with_program(
                 maps.push(extension);
             }
         }
-        let pdf = snapshot(&config, &maps)?;
-        fs::remove_file(interrupted)?;
-        pdf
+        snapshot(&config, &maps)?
     } else {
         config.pdf_path()
     };
@@ -472,6 +474,28 @@ mod tests {
         assert_eq!(fs::read(kept.join("main.pdf")).unwrap(), b"last good PDF");
         assert!(config.output_dir().join("user-notes.txt").is_file());
         assert!(!config.output_dir().join("build-interrupted").exists());
+    }
+    #[test]
+    fn an_ordinary_failed_build_keeps_auxiliaries_for_an_incremental_retry() {
+        let fixture = Fixture::new();
+        let config = fixture.config();
+        let tool = fixture.program("printf 'citations' > .folio/main.aux\nexit 12");
+        let failed =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(!failed.success && !failed.cancelled);
+        assert!(
+            !config.output_dir().join("build-interrupted").exists(),
+            "a build that ran to completion is not interrupted"
+        );
+        let tool =
+            fixture.program("test -e .folio/main.aux || exit 13\nprintf PDF > .folio/main.pdf");
+        let retried =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(
+            retried.success,
+            "auxiliary files must survive: {}",
+            retried.log
+        );
     }
     #[test]
     fn cancellation_still_works_with_timeout_disabled_and_an_uncooperative_child() {
