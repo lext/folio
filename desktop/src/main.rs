@@ -10,6 +10,7 @@ mod pdf_worker;
 mod performance;
 mod preview;
 mod project;
+mod recovery;
 mod settings;
 mod theme;
 mod workspace;
