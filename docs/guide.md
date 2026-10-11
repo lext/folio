@@ -170,7 +170,15 @@ engine = "xelatex"
 [editor]
 font_size = 17
 line_numbers = true
+
+[theme]
+mode = "light"
 ```
+
+`[theme] mode` selects the built-in `dark` (default) or `light` palette; `system`
+follows the desktop appearance, also while Folio is running. The palette covers
+the editor, syntax colors, file browser, menus, search and Git marks. PDF pages
+keep their own colors.
 
 Keyboard shortcuts match the exact modifiers. A shortcut cannot be assigned to
 two actions that are active in the same context. An empty mouse `go = ""` disables
@@ -189,7 +197,7 @@ There are no permanent action buttons, toolbars, tab strips or status bars. The
 caption can move the window; macOS keeps its native window controls in the same
 surface. Linux keeps its window manager decorations. Commands and source/PDF
 switching use a searchable overlay; right-click opens Commands without a shortcut.
-Native typography, a charcoal palette and shared spacing keep the editor, browser,
+Native typography, a charcoal or light palette and shared spacing keep the editor, browser,
 search and popovers consistent. Fonts load once from common platform locations
 with bundled fallbacks. No webview, blur, widget transitions or blinking caret
 is needed. File/command results are virtualized and refilter only when the query

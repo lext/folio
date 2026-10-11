@@ -1,4 +1,4 @@
-use eframe::egui::{self, Color32, RichText};
+use eframe::egui::{self, RichText};
 use folio_core::git::{self, ChangeKind, Commit, Comparison, Hunk};
 use std::{
     path::PathBuf,
@@ -246,9 +246,9 @@ impl Git {
                 ),
             );
             let color = match hunk.kind() {
-                ChangeKind::Added => Color32::from_rgb(102, 193, 145),
-                ChangeKind::Modified => Color32::from_rgb(105, 162, 229),
-                ChangeKind::Deleted => Color32::from_rgb(229, 120, 120),
+                ChangeKind::Added => crate::theme::of(ui).added,
+                ChangeKind::Modified => crate::theme::of(ui).modified,
+                ChangeKind::Deleted => crate::theme::of(ui).deleted,
             };
             ui.painter().rect_filled(rect, 1., color);
             if ui
@@ -277,8 +277,8 @@ impl Git {
                 .show(ctx, |ui| {
                     egui::ScrollArea::both().max_height(360.).show(ui, |ui| {
                         for (prefix, lines, color) in [
-                            ("−", &hunk.before, Color32::from_rgb(229, 120, 120)),
-                            ("+", &hunk.after, Color32::from_rgb(102, 193, 145)),
+                            ("−", &hunk.before, crate::theme::of(ui).deleted),
+                            ("+", &hunk.after, crate::theme::of(ui).added),
                         ] {
                             for line in lines {
                                 ui.label(

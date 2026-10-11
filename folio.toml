@@ -79,6 +79,10 @@ line_numbers = true
 font_size = 15
 auto_complete = true
 
+[theme]
+# dark, light, or system to follow the desktop appearance while Folio runs.
+mode = "dark"
+
 [preview]
 # On source -> PDF: fit width, fit the whole page, or keep the previous zoom.
 fit_on_switch = "width" # width, page, keep

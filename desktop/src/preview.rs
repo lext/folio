@@ -477,62 +477,64 @@ impl Preview {
                 .copy_text(text.selected_text(a.min(b)..a.max(b) + 1));
         }
         if self.find_visible {
-            crate::theme::popup().inner_margin(10.).show(ui, |ui| {
-                ui.horizontal(|ui| {
-                    let find_id = ui.make_persistent_id("pdf-find");
-                    if self.focus_find {
-                        if ui.memory(|m| m.allows_interaction(ui.layer_id())) {
-                            ui.memory_mut(|m| m.request_focus(find_id));
-                            self.focus_find = false;
-                        } else {
-                            ui.ctx().request_repaint();
+            crate::theme::popup(ui.visuals())
+                .inner_margin(10.)
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        let find_id = ui.make_persistent_id("pdf-find");
+                        if self.focus_find {
+                            if ui.memory(|m| m.allows_interaction(ui.layer_id())) {
+                                ui.memory_mut(|m| m.request_focus(find_id));
+                                self.focus_find = false;
+                            } else {
+                                ui.ctx().request_repaint();
+                            }
                         }
-                    }
-                    let focused = ui.memory(|m| m.has_focus(find_id));
-                    let next = focused
-                        && self
-                            .settings
-                            .keybindings
-                            .consume(ui.ctx(), Action::FindNext);
-                    let previous = focused
-                        && self
-                            .settings
-                            .keybindings
-                            .consume(ui.ctx(), Action::FindPrevious);
-                    let search = ui.add(
-                        egui::TextEdit::singleline(&mut self.query)
-                            .id(find_id)
-                            .return_key(None)
-                            .frame(false)
-                            .font(egui::FontId::proportional(14.))
-                            .hint_text("Find in PDF…")
-                            .desired_width(200.),
-                    );
-                    if search.changed() {
-                        self.match_index = 0;
-                        self.search();
-                        self.goto_match();
-                    }
-                    ui.label(crate::theme::caption(format!(
-                        "{} matches",
-                        self.results.len()
-                    )));
-                    crate::theme::search_hint(ui, &self.settings.keybindings);
-                    if previous && !self.results.is_empty() {
-                        self.match_index =
-                            (self.match_index + self.results.len() - 1) % self.results.len();
-                        self.goto_match();
-                    }
-                    if next && !self.results.is_empty() {
-                        self.match_index = (self.match_index + 1) % self.results.len();
-                        self.goto_match();
-                    }
+                        let focused = ui.memory(|m| m.has_focus(find_id));
+                        let next = focused
+                            && self
+                                .settings
+                                .keybindings
+                                .consume(ui.ctx(), Action::FindNext);
+                        let previous = focused
+                            && self
+                                .settings
+                                .keybindings
+                                .consume(ui.ctx(), Action::FindPrevious);
+                        let search = ui.add(
+                            egui::TextEdit::singleline(&mut self.query)
+                                .id(find_id)
+                                .return_key(None)
+                                .frame(false)
+                                .font(egui::FontId::proportional(14.))
+                                .hint_text("Find in PDF…")
+                                .desired_width(200.),
+                        );
+                        if search.changed() {
+                            self.match_index = 0;
+                            self.search();
+                            self.goto_match();
+                        }
+                        ui.label(crate::theme::caption(
+                            ui,
+                            format!("{} matches", self.results.len()),
+                        ));
+                        crate::theme::search_hint(ui, &self.settings.keybindings);
+                        if previous && !self.results.is_empty() {
+                            self.match_index =
+                                (self.match_index + self.results.len() - 1) % self.results.len();
+                            self.goto_match();
+                        }
+                        if next && !self.results.is_empty() {
+                            self.match_index = (self.match_index + 1) % self.results.len();
+                            self.goto_match();
+                        }
+                    });
                 });
-            });
             ui.add_space(12.);
         }
         if let Some(error) = &self.error {
-            ui.colored_label(Color32::from_rgb(246, 163, 141), error);
+            ui.colored_label(crate::theme::of(ui).error, error);
         }
         if self.sizes.is_empty() {
             ui.add_space(100.);

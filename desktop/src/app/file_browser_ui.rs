@@ -47,7 +47,11 @@ impl App {
             .default_width(232.)
             .width_range(170. ..=420.)
             .resizable(true)
-            .frame(egui::Frame::new().fill(theme::SIDEBAR).inner_margin(12.))
+            .frame(
+                egui::Frame::new()
+                    .fill(theme::palette(&ctx.style().visuals).sidebar)
+                    .inner_margin(12.),
+            )
             .show(ctx, |ui| {
                 ui.spacing_mut().item_spacing.y = 2.;
                 let (rect, header) = ui.allocate_exact_size(
@@ -59,16 +63,17 @@ impl App {
                     egui::Align2::LEFT_CENTER,
                     "PROJECT",
                     FontId::proportional(10.),
-                    theme::MUTED,
+                    theme::of(ui).muted,
                 );
                 ui.painter().text(
                     rect.right_center() - egui::vec2(8., 0.),
                     egui::Align2::RIGHT_CENTER,
                     theme::key_label(&self.settings.keybindings.hint(Action::ProjectFiles)),
                     FontId::proportional(10.),
-                    theme::MUTED,
+                    theme::of(ui).muted,
                 );
                 header.context_menu(|ui| {
+                    theme::menu(ui);
                     for command in [
                         Action::AddProjectFile,
                         Action::ImportFigure,
@@ -131,37 +136,51 @@ impl App {
                             .tabs
                             .iter()
                             .any(|t| t.doc.path == entry.path && t.doc.is_dirty());
-                        let response = ui
-                            .horizontal(|ui| {
-                                ui.add_space(
-                                    (entry.depth as f32 * 14.)
-                                        .min((ui.available_width() - 60.).max(0.)),
-                                );
-                                ui.add_sized(
-                                    [ui.available_width(), row_height],
-                                    egui::Button::selectable(active, format!("    {}", entry.name))
-                                        .shortcut_text(if dirty { "•" } else { "" })
-                                        .truncate(),
-                                )
-                            })
-                            .inner;
+                        // Paint rows like every other Folio list: a quiet fill for
+                        // hover/selection and palette text, never a framed button.
+                        let p = theme::of(ui);
+                        let (rect, response) = ui.allocate_exact_size(
+                            egui::vec2(ui.available_width(), row_height),
+                            egui::Sense::click(),
+                        );
+                        response.widget_info(|| {
+                            egui::WidgetInfo::selected(
+                                egui::WidgetType::SelectableLabel,
+                                ui.is_enabled(),
+                                active,
+                                &entry.name,
+                            )
+                        });
+                        let hovered = response.hovered() || response.has_focus();
+                        if active || hovered {
+                            ui.painter().rect_filled(
+                                rect,
+                                6.,
+                                if active { p.selected } else { p.hover },
+                            );
+                        }
                         if active {
                             ui.painter().rect_filled(
                                 egui::Rect::from_center_size(
-                                    egui::pos2(response.rect.left() + 2., response.rect.center().y),
+                                    egui::pos2(rect.left() + 2., rect.center().y),
                                     egui::vec2(2., 14.),
                                 ),
                                 1.,
-                                theme::ACCENT,
+                                p.accent,
                             );
                         }
+                        let indent = (entry.depth as f32 * 14.).min((rect.width() - 60.).max(0.));
                         // Draw icons directly: the bundled font lacks several
                         // triangle/diamond glyphs on both supported platforms.
-                        let icon = egui::pos2(
-                            response.rect.left() + ui.spacing().button_padding.x,
-                            response.rect.center().y,
+                        let icon = egui::pos2(rect.left() + 10. + indent, rect.center().y);
+                        let stroke = egui::Stroke::new(
+                            1.0_f32,
+                            if active || hovered {
+                                p.secondary
+                            } else {
+                                p.muted
+                            },
                         );
-                        let stroke = ui.style().interact_selectable(&response, active).fg_stroke;
                         match entry.kind {
                             Kind::Directory => {
                                 let points = if self.browser.expanded(&entry.path) {
@@ -187,10 +206,43 @@ impl App {
                             }
                             Kind::Text => {}
                         }
+                        let mut right = rect.right() - 10.;
+                        if dirty {
+                            let dot = ui.painter().text(
+                                egui::pos2(right, rect.center().y),
+                                egui::Align2::RIGHT_CENTER,
+                                "•",
+                                FontId::proportional(13.),
+                                p.accent,
+                            );
+                            right = dot.left() - 6.;
+                        }
+                        let left = icon.x + 16.;
+                        // Sources read as primary text; folders and files that
+                        // open outside Folio stay one step quieter.
+                        let color = if active || hovered || entry.kind == Kind::Text {
+                            p.text
+                        } else {
+                            p.secondary
+                        };
+                        let mut job = egui::text::LayoutJob::simple_singleline(
+                            entry.name.clone(),
+                            FontId::proportional(13.),
+                            color,
+                        );
+                        job.wrap =
+                            egui::text::TextWrapping::truncate_at_width((right - left).max(0.));
+                        let name = ui.fonts_mut(|f| f.layout_job(job));
+                        ui.painter().galley(
+                            egui::pos2(left, rect.center().y - name.size().y / 2.),
+                            name,
+                            color,
+                        );
                         if response.clicked() {
                             chosen = Some(entry.clone());
                         }
                         response.context_menu(|ui| {
+                            theme::menu(ui);
                             if entry.kind != Kind::Directory
                                 && ui.button("Copy relative path").clicked()
                             {
@@ -359,6 +411,83 @@ mod tests {
         assert!(!app.browser.open);
         drop(app);
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn browser_rows_use_the_configured_palette_without_button_frames() {
+        fn collect(shape: &egui::epaint::Shape, out: &mut Vec<egui::epaint::Shape>) {
+            match shape {
+                egui::epaint::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, out)),
+                other => out.push(other.clone()),
+            }
+        }
+        for (mode, p) in [("dark", &theme::DARK), ("light", &theme::LIGHT)] {
+            let dir = std::env::temp_dir().join(format!(
+                "folio-browser-palette-{mode}-{}",
+                std::process::id()
+            ));
+            let project = Project::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+            let ctx = egui::Context::default();
+            let settings = Settings::parse(&format!("[theme]\nmode='{mode}'")).unwrap();
+            let mut app = App::with_settings(ctx.clone(), Some(dir.clone()), Arc::new(settings));
+            super::super::tests::settle(&mut app, &ctx, |a| !a.scanning);
+            app.open_document(project.directory.join("main.tex"));
+            app.browser.open = true;
+            let mut output = None;
+            for _ in 0..3 {
+                output = Some(ctx.run(
+                    egui::RawInput {
+                        screen_rect: Some(egui::Rect::from_min_size(
+                            egui::Pos2::ZERO,
+                            egui::vec2(1000., 700.),
+                        )),
+                        ..Default::default()
+                    },
+                    |ctx| app.workspace_ui(ctx),
+                ));
+            }
+            let mut shapes = Vec::new();
+            for clipped in &output.unwrap().shapes {
+                collect(&clipped.shape, &mut shapes);
+            }
+            let text_color = |name: &str| {
+                shapes
+                    .iter()
+                    .find_map(|s| match s {
+                        egui::epaint::Shape::Text(t) if t.galley.job.text == name => {
+                            Some(t.galley.job.sections[0].format.color)
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| panic!("{mode}: {name} is missing"))
+            };
+            assert_eq!(text_color("supplement.tex"), p.text, "{mode} source row");
+            assert_eq!(text_color("sections"), p.secondary, "{mode} folder row");
+            assert_eq!(text_color("PROJECT"), p.muted, "{mode} header");
+            let fills: Vec<_> = shapes
+                .iter()
+                .filter_map(|s| match s {
+                    egui::epaint::Shape::Rect(r) => Some((r.fill, r.stroke.color, r.stroke.width)),
+                    _ => None,
+                })
+                .collect();
+            assert!(
+                fills.iter().any(|(fill, ..)| *fill == p.selected),
+                "{mode}: the active row is filled with the selection color"
+            );
+            assert!(
+                fills.iter().any(|(fill, ..)| *fill == p.sidebar),
+                "{mode}: the panel uses the sidebar color"
+            );
+            assert!(
+                !fills.iter().any(|(fill, stroke, width)| *fill == p.selected
+                    && *width > 0.
+                    && *stroke != egui::Color32::TRANSPARENT),
+                "{mode}: rows are never outlined"
+            );
+            drop(app);
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

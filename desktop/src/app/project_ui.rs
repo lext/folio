@@ -348,7 +348,7 @@ impl App {
                         ctx.request_repaint();
                     }
                     if !error.is_empty() {
-                        ui.colored_label(Color32::LIGHT_RED, error.as_str());
+                        ui.colored_label(theme::of(ui).error, error.as_str());
                     }
                     ui.horizontal(|ui| {
                         if ui.button("Create").clicked() {

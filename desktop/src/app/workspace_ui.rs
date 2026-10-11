@@ -283,7 +283,7 @@ impl App {
         egui::TopBottomPanel::top("workspace-caption")
             .exact_height(38.)
             .show_separator_line(false)
-            .frame(egui::Frame::new().fill(theme::CANVAS))
+            .frame(egui::Frame::new().fill(theme::palette(&ctx.style().visuals).canvas))
             .show(ctx, |ui| {
                 let (rect, response) = ui.allocate_exact_size(
                     egui::vec2(ui.available_width(), 38.),
@@ -314,7 +314,7 @@ impl App {
                     egui::Align2::RIGHT_CENTER,
                     meta,
                     FontId::proportional(11.),
-                    theme::MUTED,
+                    theme::of(ui).muted,
                 );
                 let project_width = 160_f32.min((rect.width() * 0.22).max(0.));
                 let project_clip = egui::Rect::from_min_max(
@@ -326,7 +326,7 @@ impl App {
                     egui::Align2::LEFT_CENTER,
                     &project.manifest.name,
                     FontId::proportional(12.),
-                    theme::SECONDARY,
+                    theme::of(ui).secondary,
                 );
                 let next = label.right().min(project_clip.right()) + 18.;
                 ui.painter().text(
@@ -334,7 +334,7 @@ impl App {
                     egui::Align2::LEFT_CENTER,
                     "/",
                     FontId::proportional(12.),
-                    theme::BORDER,
+                    theme::of(ui).border,
                 );
                 let path = if self.layers.layer == Layer::Preview {
                     "main.pdf".into()
@@ -359,7 +359,7 @@ impl App {
                     egui::Align2::LEFT_CENTER,
                     path,
                     FontId::proportional(12.),
-                    theme::TEXT,
+                    theme::of(ui).text,
                 );
             });
     }
@@ -459,7 +459,7 @@ impl App {
                 .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(14., -12.))
                 .order(egui::Order::Foreground)
                 .show(ctx, |ui| {
-                    theme::popup()
+                    theme::popup(ui.visuals())
                         .inner_margin(egui::Margin::symmetric(12, 8))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -468,8 +468,11 @@ impl App {
                                         egui::vec2(10., 10.),
                                         egui::Sense::hover(),
                                     );
-                                    ui.painter()
-                                        .circle_filled(rect.center(), 2.5, theme::ACCENT);
+                                    ui.painter().circle_filled(
+                                        rect.center(),
+                                        2.5,
+                                        theme::of(ui).accent,
+                                    );
                                 }
                                 let message = if self.exporting {
                                     "Exporting and checking compilation…"

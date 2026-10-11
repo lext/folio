@@ -12,7 +12,7 @@ use crate::{
     settings::{Action, Settings},
     theme,
 };
-use eframe::egui::{self, Color32, FontId, RichText};
+use eframe::egui::{self, FontId, RichText};
 #[cfg(test)]
 use folio_core::build::Engine;
 use folio_core::{
@@ -171,7 +171,7 @@ impl App {
         // Dispatch UI zoom through our configurable action registry. Egui's
         // built-in handler would otherwise keep its old shortcuts active.
         ctx.options_mut(|o| o.zoom_with_keyboard = false);
-        theme::apply(&ctx, settings.editor.font_size);
+        theme::apply(&ctx, settings.editor.font_size, settings.theme);
         let (tx, rx) = mpsc::channel();
         let mut app = Self {
             launcher: None,
@@ -695,12 +695,12 @@ impl App {
                 ui.add_space(((ui.available_width() - 360.) / 2.).max(0.));
                 ui.vertical(|ui| {
                     ui.set_width(360_f32.min(ui.available_width()));
-                    ui.label(RichText::new("Folio").size(42.).color(theme::TEXT));
+                    ui.label(RichText::new("Folio").size(42.).color(theme::of(ui).text));
                     ui.add_space(8.);
                     ui.label(
                         RichText::new("A place for your next paper.")
                             .size(14.)
-                            .color(theme::SECONDARY),
+                            .color(theme::of(ui).secondary),
                     );
                     ui.add_space(32.);
                     for action in [Action::NewProject, Action::OpenProject] {
@@ -720,21 +720,27 @@ impl App {
                         }
                     }
                     ui.add_space(24.);
-                    ui.label(theme::caption(format!(
-                        "{}   Switch surface",
-                        theme::key_label(&self.settings.keybindings.hint(Action::Switcher))
-                    )));
-                    ui.label(theme::caption(format!(
-                        "{}   Commands · or right-click anywhere",
-                        theme::key_label(&self.settings.keybindings.hint(Action::Commands))
-                    )));
+                    ui.label(theme::caption(
+                        ui,
+                        format!(
+                            "{}   Switch surface",
+                            theme::key_label(&self.settings.keybindings.hint(Action::Switcher))
+                        ),
+                    ));
+                    ui.label(theme::caption(
+                        ui,
+                        format!(
+                            "{}   Commands · or right-click anywhere",
+                            theme::key_label(&self.settings.keybindings.hint(Action::Commands))
+                        ),
+                    ));
                 });
             });
             return false;
         }
         let mut searched = false;
         if self.show_find {
-            theme::popup().inner_margin(10.).show(ui, |ui| {
+            theme::popup(ui.visuals()).inner_margin(10.).show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let find_id = ui.make_persistent_id("source-find");
                     if self.focus_find {
@@ -852,7 +858,7 @@ impl App {
                             (line + 1).to_string(),
                             egui::TextFormat {
                                 font_id: font.clone(),
-                                color: theme::MUTED,
+                                color: theme::of(ui).muted,
                                 line_height: Some(height),
                                 ..Default::default()
                             },
@@ -864,7 +870,7 @@ impl App {
                                 output.galley_pos.y + line as f32 * height,
                             ),
                             number,
-                            theme::MUTED,
+                            theme::of(ui).muted,
                         );
                     }
                     let aligned_gutter =
@@ -922,11 +928,8 @@ impl App {
                             .pos_from_cursor(egui::text::CCursor::new(tab.selection.end));
                         let rect = egui::Rect::from_min_max(start.left_top(), end.right_bottom())
                             .translate(output.galley_pos.to_vec2());
-                        ui.painter().rect_filled(
-                            rect,
-                            2.,
-                            Color32::from_rgba_unmultiplied(172, 207, 192, 40),
-                        );
+                        ui.painter()
+                            .rect_filled(rect, 2., theme::tint(theme::of(ui).accent, 40));
                         if searched {
                             ui.scroll_to_rect(rect.expand(6.), Some(egui::Align::Center));
                         }
@@ -958,7 +961,7 @@ impl App {
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
             .show(ctx, |ui| {
-                theme::popup().inner_margin(6.).show(ui, |ui| {
+                theme::popup(ui.visuals()).inner_margin(6.).show(ui, |ui| {
                     ui.set_width(420.);
                     ui.spacing_mut().item_spacing.y = 2.;
                     egui::ScrollArea::vertical()
@@ -991,7 +994,7 @@ impl App {
         let go_requested = egui::CentralPanel::default()
             .frame(
                 egui::Frame::new()
-                    .fill(theme::CANVAS)
+                    .fill(theme::palette(&ctx.style().visuals).canvas)
                     .inner_margin(egui::Margin::symmetric(24, 20)),
             )
             .show(ctx, |ui| {
@@ -1338,7 +1341,7 @@ mod tests {
                     .unwrap()
                     .format
                     .color,
-                Color32::from_rgb(166, 192, 177)
+                theme::DARK.string
             );
             let tab = &mut app.tabs[app.active];
             tab.cursor = source[..source.find("sec").unwrap() + 3].chars().count();
@@ -1377,7 +1380,7 @@ mod tests {
                 .shapes
                 .iter()
                 .filter_map(|s| match &s.shape {
-                    egui::Shape::Rect(r) if r.stroke.color == theme::ACCENT => Some(r.rect),
+                    egui::Shape::Rect(r) if r.stroke.color == theme::DARK.accent => Some(r.rect),
                     _ => None,
                 })
                 .collect();
@@ -1431,7 +1434,7 @@ mod tests {
             .shapes
             .into_iter()
             .filter_map(|shape| match shape.shape {
-                egui::Shape::Rect(rect) if rect.fill == Color32::WHITE => {
+                egui::Shape::Rect(rect) if rect.fill == egui::Color32::WHITE => {
                     Some((rect.rect, shape.clip_rect))
                 }
                 _ => None,

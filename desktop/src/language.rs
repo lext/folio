@@ -19,10 +19,23 @@ pub struct Language {
     pub errors: Vec<usize>,
     pub outline: Vec<syntax::OutlineEntry>,
     job: LayoutJob,
+    /// One highlight style per job section, for recoloring at layout.
+    styles: Vec<Style>,
 }
 impl Default for Language {
     fn default() -> Self {
         Self::new(Kind::Latex)
+    }
+}
+fn syntax_color(palette: &crate::theme::Palette, style: Style) -> Color32 {
+    match style {
+        Style::Text => palette.text,
+        Style::Command | Style::Key => palette.command,
+        Style::Comment => palette.comment,
+        Style::Math | Style::Number => palette.math,
+        Style::Delimiter => palette.delimiter,
+        Style::Verbatim | Style::String => palette.string,
+        Style::Keyword => palette.keyword,
     }
 }
 fn point(s: &str, offset: usize) -> Point {
@@ -59,6 +72,7 @@ impl Language {
             errors: vec![],
             outline: vec![],
             job: LayoutJob::default(),
+            styles: Vec::new(),
         }
     }
     pub fn is_latex(&self) -> bool {
@@ -137,16 +151,12 @@ impl Language {
         self.brackets.update(self.kind, source, &tokens);
         self.motions.update(source, self.kind, &tokens);
         let mut job = LayoutJob::default();
+        let mut styles = Vec::with_capacity(tokens.len());
         for token in tokens {
-            let color = match token.style {
-                Style::Text => crate::theme::TEXT,
-                Style::Command | Style::Key => Color32::from_rgb(171, 189, 213),
-                Style::Comment => Color32::from_rgb(127, 142, 144),
-                Style::Math | Style::Number => Color32::from_rgb(211, 193, 158),
-                Style::Delimiter => Color32::from_rgb(149, 159, 173),
-                Style::Verbatim | Style::String => Color32::from_rgb(166, 192, 177),
-                Style::Keyword => Color32::from_rgb(194, 177, 208),
-            };
+            // The cached job carries the dark palette; layout recolors each
+            // section for the theme it is painted with.
+            let color = syntax_color(&crate::theme::DARK, token.style);
+            styles.push(token.style);
             job.append(
                 &source[token.range],
                 0.,
@@ -158,6 +168,7 @@ impl Language {
             );
         }
         self.job = job;
+        self.styles = styles;
         self.source = source.into();
         self.initialized = true;
     }
@@ -172,9 +183,9 @@ impl Language {
             return;
         };
         let color = if pair.partner.is_some() {
-            crate::theme::ACCENT
+            crate::theme::of(ui).accent
         } else {
-            Color32::from_rgb(218, 147, 135)
+            crate::theme::of(ui).error
         };
         let painter = ui
             .painter()
@@ -207,7 +218,9 @@ impl Language {
         self.update(text);
         let mut job = self.job.clone();
         let font = egui::TextStyle::Monospace.resolve(ui.style());
-        for section in &mut job.sections {
+        let palette = crate::theme::of(ui);
+        for (section, style) in job.sections.iter_mut().zip(&self.styles) {
+            section.format.color = syntax_color(palette, *style);
             section.format.font_id = font.clone();
             section.format.line_height = Some(crate::theme::line_height(font.size));
         }
@@ -264,8 +277,8 @@ mod tests {
                     .format
                     .color
             };
-            assert_eq!(color(key), Color32::from_rgb(171, 189, 213));
-            assert_eq!(color(value), Color32::from_rgb(166, 192, 177));
+            assert_eq!(color(key), crate::theme::DARK.command);
+            assert_eq!(color(value), crate::theme::DARK.string);
             assert_eq!(lang.job.text, changed);
             assert!(lang.errors.is_empty());
             assert!(lang.outline.is_empty());
@@ -275,6 +288,35 @@ mod tests {
             );
             lang.update("");
             assert!(lang.job.text.is_empty());
+        }
+    }
+    #[test]
+    fn layout_recolors_cached_highlighting_for_the_active_theme() {
+        use crate::theme::{DARK, LIGHT, Mode};
+        let source = "\\section{Title} % note";
+        for (mode, p) in [(Mode::Dark, &DARK), (Mode::Light, &LIGHT)] {
+            let ctx = egui::Context::default();
+            crate::theme::apply(&ctx, 15., mode);
+            let mut lang = Language::default();
+            let _ = ctx.run(egui::RawInput::default(), |ctx| {
+                egui::CentralPanel::default().show(ctx, |ui| {
+                    let galley = lang.layout(ui, source, 400.);
+                    let color = |text: &str| {
+                        let byte = source.find(text).unwrap();
+                        galley
+                            .job
+                            .sections
+                            .iter()
+                            .find(|s| s.byte_range.contains(&byte))
+                            .unwrap()
+                            .format
+                            .color
+                    };
+                    assert_eq!(color("\\section"), p.command, "{mode:?}");
+                    assert_eq!(color("Title"), p.text, "{mode:?}");
+                    assert_eq!(color("% note"), p.comment, "{mode:?}");
+                });
+            });
         }
     }
     #[test]
