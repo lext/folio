@@ -112,6 +112,11 @@ impl Project {
                 directory.join("sections/introduction.tex"),
                 "\\section{Introduction}\nStart writing here.\n",
             )?;
+            // Standalone supplementary material; main.tex does not include it.
+            fs::write(
+                directory.join("supplement.tex"),
+                "\\documentclass{article}\n\\usepackage[T1]{fontenc}\n\\usepackage{graphicx}\n\\begin{document}\n\\section*{Supplementary material}\nAdd supplementary methods, figures and tables here.\n\\end{document}\n",
+            )?;
             fs::write(
                 directory.join("references.bib"),
                 "% Add BibTeX or BibLaTeX entries here.\n",
@@ -119,7 +124,7 @@ impl Project {
             fs::write(directory.join(".gitignore"), ".folio/\n.DS_Store\n")?;
             fs::write(
                 directory.join("README.md"),
-                "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\n.folio/ contains generated output; do not edit it.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
+                "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nsupplement.tex is a separate document for supplementary material.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\n.folio/ contains generated output; do not edit it.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
             )?;
             Self::load(directory)
         })();
@@ -309,6 +314,7 @@ fn allowed_file(path: &Path) -> bool {
             MANIFEST,
             "main.tex",
             "preamble.tex",
+            "supplement.tex",
             "references.bib",
             ".gitignore",
             "LICENSE",
