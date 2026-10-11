@@ -22,6 +22,10 @@ impl Document {
             text,
         })
     }
+    /// The content last read from or written to disk.
+    pub fn saved(&self) -> &str {
+        &self.saved
+    }
     pub fn is_dirty(&self) -> bool {
         self.text != self.saved
     }

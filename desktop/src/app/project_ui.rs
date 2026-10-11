@@ -51,6 +51,8 @@ impl App {
         }
     }
     fn reset_workspace(&mut self) {
+        // Reached only once the old buffers are saved or deliberately dropped.
+        self.discard_recovery();
         self.tabs.clear();
         self.active = 0;
         self.root = None;

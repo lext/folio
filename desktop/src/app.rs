@@ -52,6 +52,10 @@ struct Tab {
     indexed_revision: Option<u64>,
     index: Arc<completion::Index>,
     line_count: usize,
+    /// Revision last considered for a crash-recovery copy.
+    recovery_seen: Option<u64>,
+    /// Whether a recovery copy of this buffer exists on disk.
+    recovery_file: bool,
 }
 impl Tab {
     fn edited(&mut self) {
@@ -131,6 +135,7 @@ pub struct App {
     disk_indexes: HashMap<PathBuf, Arc<completion::Index>>,
     ctx: egui::Context,
     preview_pending: bool,
+    recovery: crate::recovery::Recovery,
     project_stamp: Option<u64>,
     /// Key of the applied snapshot; an identical periodic scan is skipped.
     scan_key: Option<u64>,
@@ -213,6 +218,7 @@ impl App {
             disk_indexes: HashMap::new(),
             ctx: ctx.clone(),
             preview_pending: false,
+            recovery: Default::default(),
             project_stamp: None,
             scan_key: None,
             last_scan: Instant::now(),
@@ -290,8 +296,32 @@ impl App {
             return;
         }
         match Document::open(&canonical) {
-            Ok(doc) => {
+            Ok(mut doc) => {
+                // Unsaved edits from a session that ended without a save.
+                let found = self
+                    .recovery_file(&doc.path)
+                    .map_or(crate::recovery::Found::Nothing, |file| {
+                        crate::recovery::take(&file, &doc.text)
+                    });
+                let mut notice = String::new();
+                let mut recovery_file = false;
+                match found {
+                    crate::recovery::Found::Edits(text) => {
+                        doc.text = text;
+                        recovery_file = true;
+                        notice = "Restored unsaved edits from the last session. Save to keep them, or Reload to discard.".into();
+                    }
+                    crate::recovery::Found::Orphaned(aside) => {
+                        notice = format!(
+                            "This file changed since unsaved edits were last kept. They are in {}",
+                            aside.display()
+                        );
+                    }
+                    crate::recovery::Found::Nothing => {}
+                }
                 self.tabs.push(Tab {
+                    recovery_seen: Some(0),
+                    recovery_file,
                     line_count: doc.text.bytes().filter(|b| *b == b'\n').count() + 1,
                     revision: 0,
                     indexed_revision: None,
@@ -306,9 +336,52 @@ impl App {
                 self.active = self.tabs.len() - 1;
                 self.source();
                 self.refresh_project();
-                self.status.clear();
+                self.status = notice;
             }
             Err(e) => self.status = e.to_string(),
+        }
+    }
+    fn recovery_file(&self, source: &std::path::Path) -> Option<PathBuf> {
+        crate::recovery::file(&self.managed.as_ref()?.directory, source)
+    }
+    /// Keep a copy of each buffer with unsaved edits once typing pauses, and
+    /// drop the copy as soon as the buffer is clean again.
+    fn sync_recovery(&mut self, quiet: bool) {
+        let Some(directory) = self.managed.as_ref().map(|p| p.directory.clone()) else {
+            return;
+        };
+        for tab in &mut self.tabs {
+            let remove = tab.recovery_file && !tab.doc.is_dirty();
+            let consider = !remove && quiet && tab.recovery_seen != Some(tab.revision);
+            if !remove && !consider {
+                continue;
+            }
+            let Some(file) = crate::recovery::file(&directory, &tab.doc.path) else {
+                continue;
+            };
+            if remove {
+                self.recovery.remove(file);
+                tab.recovery_file = false;
+            } else {
+                tab.recovery_seen = Some(tab.revision);
+                if tab.doc.is_dirty() {
+                    self.recovery.write(file, tab.doc.saved(), &tab.doc.text);
+                    tab.recovery_file = true;
+                }
+            }
+        }
+    }
+    /// The user chose to throw unsaved edits away; their copies go too.
+    fn discard_recovery(&mut self) {
+        let Some(directory) = self.managed.as_ref().map(|p| p.directory.clone()) else {
+            return;
+        };
+        for tab in &mut self.tabs {
+            if std::mem::take(&mut tab.recovery_file)
+                && let Some(file) = crate::recovery::file(&directory, &tab.doc.path)
+            {
+                self.recovery.remove(file);
+            }
         }
     }
     fn scan_buffers(&self) -> Vec<(PathBuf, String)> {
@@ -430,6 +503,9 @@ impl App {
         if changed {
             self.refresh_project();
         }
+        // Saved buffers need no copy; do not wait for the next frame, since a
+        // save is often the last thing that happens before the window closes.
+        self.sync_recovery(false);
         if !errors.is_empty() {
             self.status = format!("Save failed:\n{}", errors.join("\n"));
             return false;
@@ -1175,6 +1251,13 @@ impl eframe::App for App {
         if self.last_edit.0 != self.layers.revision {
             self.last_edit = (self.layers.revision, Instant::now());
         }
+        let pause = Duration::from_secs(1);
+        if self.last_edit.1.elapsed() >= pause {
+            self.sync_recovery(true);
+        } else {
+            self.sync_recovery(false);
+            ctx.request_repaint_after(pause);
+        }
         if self.last_scan.elapsed() > Duration::from_secs(2) {
             // A scan made from older text is discarded, so scanning during a
             // burst of typing is wasted work. Wait for a short pause instead.
@@ -1287,6 +1370,7 @@ impl eframe::App for App {
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
                         if ui.button("Discard and quit").clicked() {
+                            self.discard_recovery();
                             self.allow_close = true;
                             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                         }
@@ -2491,6 +2575,82 @@ mod tests {
         let items = &app.completion.as_ref().unwrap().suggestions.items;
         assert_eq!(items.len(), 1);
         assert!(items[0].detail.contains("Unsaved"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn unsaved_edits_survive_a_crash_and_copies_never_outlive_them() {
+        let dir = std::env::temp_dir().join(format!("folio crash recovery {}", std::process::id()));
+        let project = ManagedProject::create(&dir, "Test paper", Engine::PdfLatex).unwrap();
+        let source = project.directory.join("sections/introduction.tex");
+        let copy = project
+            .directory
+            .join(".folio/recovery/sections/introduction.tex.recover");
+        let saved = fs::read_to_string(&source).unwrap();
+        let ctx = egui::Context::default();
+        let edit = |app: &mut App, text: &str| {
+            let tab = &mut app.tabs[app.active];
+            tab.doc.text = text.into();
+            tab.edited();
+        };
+        {
+            let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+            app.open_document(source.clone());
+            edit(&mut app, "typed, never saved");
+            app.sync_recovery(false);
+            app.recovery.flush();
+            assert!(!copy.exists(), "no copy is written in the middle of typing");
+            app.sync_recovery(true);
+            app.recovery.flush();
+            assert!(copy.is_file());
+            settle(&mut app, &ctx, |a| !a.scanning);
+            // The process dies here: nothing is saved and nothing is cleaned up.
+            std::mem::forget(std::mem::take(&mut app.tabs));
+        }
+        assert_eq!(fs::read_to_string(&source).unwrap(), saved);
+        {
+            let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+            app.open_document(source.clone());
+            let tab = &app.tabs[app.active];
+            assert_eq!(tab.doc.text, "typed, never saved");
+            assert!(tab.doc.is_dirty(), "restored edits are still unsaved");
+            assert!(
+                app.status.contains("Restored unsaved edits"),
+                "{}",
+                app.status
+            );
+            assert!(app.save_all(), "{}", app.status);
+            app.recovery.flush();
+            assert!(!copy.exists(), "a saved buffer needs no copy");
+            assert_eq!(fs::read_to_string(&source).unwrap(), "typed, never saved");
+
+            // Edits the user deliberately discards must not come back.
+            edit(&mut app, "discarded on purpose");
+            app.sync_recovery(true);
+            app.recovery.flush();
+            assert!(copy.is_file());
+            app.discard_recovery();
+            app.recovery.flush();
+            assert!(!copy.exists());
+            settle(&mut app, &ctx, |a| !a.scanning);
+        }
+        {
+            // A copy based on older file content is set aside, not applied.
+            fs::create_dir_all(copy.parent().unwrap()).unwrap();
+            let mut recovery = crate::recovery::Recovery::default();
+            recovery.write(
+                copy.clone(),
+                "an older version",
+                "edits to the older version",
+            );
+            recovery.flush();
+            let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+            app.open_document(source.clone());
+            let tab = &app.tabs[app.active];
+            assert_eq!(tab.doc.text, "typed, never saved");
+            assert!(!tab.doc.is_dirty());
+            assert!(app.status.contains(".orphaned"), "{}", app.status);
+            settle(&mut app, &ctx, |a| !a.scanning);
+        }
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
