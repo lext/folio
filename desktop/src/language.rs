@@ -213,7 +213,7 @@ impl Language {
         &mut self,
         ui: &egui::Ui,
         text: &str,
-        _width: f32,
+        width: f32,
     ) -> std::sync::Arc<egui::Galley> {
         self.update(text);
         let mut job = self.job.clone();
@@ -224,8 +224,9 @@ impl Language {
             section.format.font_id = font.clone();
             section.format.line_height = Some(crate::theme::line_height(font.size));
         }
-        // Horizontal scrolling preserves one visual row per source line.
-        job.wrap.max_width = f32::INFINITY;
+        // Soft-wrap long source lines at the editor width; the gutter numbers
+        // logical lines, so a wrapped line keeps one number.
+        job.wrap.max_width = width;
         ui.fonts_mut(|f| f.layout_job(job))
     }
 }
@@ -320,18 +321,22 @@ mod tests {
         }
     }
     #[test]
-    fn source_layout_keeps_gutter_aligned_with_logical_lines() {
+    fn source_layout_soft_wraps_long_lines_at_the_editor_width() {
         let ctx = egui::Context::default();
         let mut lang = Language::default();
         let _ = ctx.run(egui::RawInput::default(), |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let galley = lang.layout(
-                    ui,
-                    "\\section{A long title that must scroll horizontally}\nSecond line",
-                    90.,
+                let source =
+                    "\\section{A long title that must wrap inside the editor}\nSecond line";
+                let galley = lang.layout(ui, source, 180.);
+                assert!(galley.rows.len() > 2, "the long line must wrap");
+                assert!(galley.size().x <= 180.);
+                // Wrapping adds rows, never logical lines.
+                assert_eq!(
+                    galley.rows.iter().filter(|r| r.ends_with_newline).count(),
+                    1
                 );
-                assert_eq!(galley.rows.len(), 2);
-                assert!(galley.size().x > 90.);
+                assert_eq!(galley.job.text, source);
             });
         });
     }
