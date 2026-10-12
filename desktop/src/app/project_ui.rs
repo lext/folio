@@ -39,6 +39,7 @@ impl App {
                 self.reset_workspace();
                 self.root = Some(project.directory.join("main.tex"));
                 self.managed = Some(project);
+                self.remember_project();
             }
             Ok(Some(target))
         })();
@@ -597,6 +598,107 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
 
+    #[test]
+    fn opened_projects_are_remembered_and_offered_on_the_welcome_screen_and_switcher() {
+        use crate::launcher::{Mode, Target};
+        let base = std::env::temp_dir().join(format!("folio-recent-ui-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let a = Project::create(&base.join("alpha"), "A", Engine::PdfLatex).unwrap();
+        let b = Project::create(&base.join("beta"), "B", Engine::PdfLatex).unwrap();
+        let file = base.join("home/.config/folio/recent-projects");
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), None);
+        app.recent_file = Some(file.clone());
+        app.open(a.directory.clone());
+        app.open(b.directory.clone());
+        app.open(b.directory.join("main.tex"));
+        assert_eq!(app.recent, [b.directory.clone(), a.directory.clone()]);
+        // The switcher offers the other project, not the one already open.
+        app.open_launcher(Mode::Surfaces);
+        let offered: Vec<&PathBuf> = app
+            .launcher
+            .as_ref()
+            .unwrap()
+            .entries()
+            .iter()
+            .filter_map(|e| match &e.target {
+                Target::Project(directory) => Some(directory),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(offered, [&a.directory]);
+        drop(app);
+        // A later session starts from the saved history and lists it.
+        let mut app = App::with_context(ctx.clone(), None);
+        app.recent = crate::recent::load(&file);
+        assert_eq!(app.recent, [b.directory.clone(), a.directory.clone()]);
+        fn text(shape: &egui::Shape, labels: &mut Vec<String>) {
+            match shape {
+                egui::Shape::Text(s) => labels.push(s.galley.job.text.clone()),
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| text(s, labels)),
+                _ => {}
+            }
+        }
+        let mut labels = Vec::new();
+        for _ in 0..2 {
+            labels.clear();
+            let output = ctx.run(egui::RawInput::default(), |ctx| app.workspace_ui(ctx));
+            for shape in output.shapes {
+                text(&shape.shape, &mut labels);
+            }
+        }
+        for expected in ["RECENT", "alpha", "beta"] {
+            assert!(
+                labels.iter().any(|s| s == expected),
+                "{expected}: {labels:?}"
+            );
+        }
+        drop(app);
+        fs::remove_dir_all(base).unwrap();
+    }
+    #[test]
+    fn an_unwritable_history_does_not_stop_a_project_from_opening() {
+        let base = std::env::temp_dir().join(format!("folio-recent-ro-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let a = Project::create(&base.join("a"), "A", Engine::PdfLatex).unwrap();
+        let mut app = App::with_context(egui::Context::default(), None);
+        // A file where the history's folder should be.
+        app.recent_file = Some(a.directory.join("main.tex/recent-projects"));
+        app.open(a.directory.clone());
+        assert_eq!(app.root, Some(a.directory.join("main.tex")));
+        assert!(
+            app.project_popup.is_none(),
+            "no error dialog for a convenience"
+        );
+        assert_eq!(app.recent, std::slice::from_ref(&a.directory));
+        drop(app);
+        fs::remove_dir_all(base).unwrap();
+    }
+    #[test]
+    fn a_failed_open_is_not_remembered_and_a_pending_switch_is_remembered_once_made() {
+        let base = std::env::temp_dir().join(format!("folio-recent-sw-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&base);
+        fs::create_dir_all(&base).unwrap();
+        let a = Project::create(&base.join("a"), "A", Engine::PdfLatex).unwrap();
+        let b = Project::create(&base.join("b"), "B", Engine::PdfLatex).unwrap();
+        fs::create_dir(base.join("plain")).unwrap();
+        let mut app = App::with_context(egui::Context::default(), Some(a.directory.clone()));
+        app.project_popup = None;
+        app.open(base.join("plain"));
+        app.open(base.join("missing"));
+        assert_eq!(app.recent, std::slice::from_ref(&a.directory));
+        app.project_popup = None;
+        // Unsaved edits hold the switch; nothing is recorded until it happens.
+        app.tabs[0].doc.text.push_str("\n% edit");
+        app.open(b.directory.clone());
+        assert_eq!(app.recent, std::slice::from_ref(&a.directory));
+        app.finish_project_switch(false);
+        assert_eq!(app.recent, [b.directory.clone(), a.directory.clone()]);
+        drop(app);
+        fs::remove_dir_all(base).unwrap();
+    }
     #[test]
     fn switching_projects_preserves_dirty_buffers_until_a_deliberate_choice() {
         let base = std::env::temp_dir().join(format!("folio-switch-ui-{}", std::process::id()));

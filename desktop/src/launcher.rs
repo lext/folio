@@ -23,6 +23,8 @@ impl Mode {
 #[derive(Clone, Debug)]
 pub enum Target {
     File(PathBuf),
+    /// Another project folder, from the recent list.
+    Project(PathBuf),
     Preview,
     Action(Action),
     Line(usize),
@@ -41,6 +43,12 @@ pub struct Launcher {
     filtered_query: Option<String>,
     matches: Vec<usize>,
     shown_rows: std::ops::Range<usize>,
+}
+impl Launcher {
+    #[cfg(test)]
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
 }
 pub enum Outcome {
     Keep,

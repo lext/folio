@@ -331,6 +331,57 @@ fn pdf_path_preserves_dots_in_document_name() {
     );
 }
 #[test]
+fn a_missing_program_is_named_from_either_shell_wording() {
+    assert_eq!(
+        missing_tool("Running 'biber  \".folio/main.bcf\"'\nsh: biber: command not found\n"),
+        Some("biber")
+    );
+    assert_eq!(missing_tool("sh: 1: bibtex: not found"), Some("bibtex"));
+    assert_eq!(
+        missing_tool("./main.tex:3: File `x.sty' not found\nLaTeX Error: not found"),
+        None
+    );
+}
+#[test]
+fn ordinary_tex_errors_are_never_mistaken_for_a_missing_program() {
+    for log in [
+        "! LaTeX Error: File `tikz.sty' not found.",
+        "./main.tex:4: LaTeX Error: File `fig.pdf' not found: using draft setting.",
+        "kpathsea: Running mktexpk: not found",
+        "Package natbib Warning: Citation `a' on page 1 undefined",
+        ": command not found",
+        "",
+    ] {
+        assert_eq!(missing_tool(log), None, "{log}");
+    }
+    assert_eq!(
+        missing_tool("noise\n/bin/sh: xelatex: command not found\nmore"),
+        Some("xelatex")
+    );
+    assert_eq!(
+        missing_tool("sh: 1: makeindex: not found"),
+        Some("makeindex")
+    );
+    assert!(missing_tool_hint("biber").contains("`biber`"));
+}
+#[test]
+fn skipped_bibliography_files_are_read_from_the_latexmk_veto() {
+    let log = "Latexmk: Veto of running of 'bibtex .folio/main' ($bibtex_use=1)\nReason: I am configured only to use bibtex/biber if all .bib files exist,\nbut the following didn't:\n  refs.bib\n  bibliography/more.bib\nLatexmk: All targets (.folio/main.pdf) are up-to-date\n  not-a-file-anymore\n";
+    assert_eq!(
+        missing_bibliographies(log),
+        ["refs.bib", "bibliography/more.bib"]
+    );
+    for log in [
+        "",
+        "Latexmk: All targets are up-to-date",
+        "but the following didn't:",
+        "but the following didn't:\nLatexmk: next",
+    ] {
+        assert!(missing_bibliographies(log).is_empty(), "{log}");
+    }
+    assert!(missing_bibliography_hint("refs.bib").contains("`refs.bib`"));
+}
+#[test]
 fn diagnostics_parse_file_line_without_losing_colons() {
     let result = parse_diagnostics(
         "/tmp/a:b/chapter.tex:42: Undefined control sequence.\n./main.tex:9: Missing $ inserted.\nnoise",

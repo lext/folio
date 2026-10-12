@@ -364,3 +364,70 @@ fn real_pdf_builds_with_plain_or_disabled_synctex_without_reusing_old_maps() {
     }
     fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+#[ignore = "requires latexmk, TeX, BibTeX and Biber"]
+fn a_bibliography_file_that_does_not_exist_is_reported_by_a_real_build() {
+    use folio_core::project::Project;
+    let base = std::env::temp_dir().join(format!("folio-missing-bib-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+    for (name, preamble, command) in [
+        (
+            "bibtex",
+            "",
+            "\\bibliographystyle{plain}\n\\bibliography{refs}",
+        ),
+        (
+            "biblatex",
+            "\\usepackage[backend=biber]{biblatex}\n\\addbibresource{refs.bib}\n",
+            "\\printbibliography",
+        ),
+    ] {
+        let p = Project::create(&base.join(name), name, Engine::PdfLatex).unwrap();
+        fs::write(
+            p.directory.join("main.tex"),
+            format!("\\documentclass{{article}}\n{preamble}\\begin{{document}}\nText~\\cite{{knuth}}.\n{command}\n\\end{{document}}\n"),
+        )
+        .unwrap();
+        let config = p.build_config().unwrap();
+        let built = compile(&config, Arc::new(AtomicBool::new(false))).unwrap();
+        let missing: Vec<_> = built
+            .diagnostics
+            .iter()
+            .filter(|d| d.message.contains("`refs.bib`"))
+            .collect();
+        assert_eq!(
+            missing.len(),
+            1,
+            "{name}: {:?}\n{}",
+            built.diagnostics,
+            built.log
+        );
+        let source = fs::read_to_string(p.directory.join("main.tex")).unwrap();
+        let line = source.lines().nth(missing[0].line - 1).unwrap();
+        assert!(
+            line.contains("refs"),
+            "{name}: diagnostic points at {line:?}"
+        );
+        // Supplying the file is enough; no clean rebuild or edit is needed.
+        fs::write(
+            p.directory.join("refs.bib"),
+            "@book{knuth,author={Donald Knuth},title={The TeXbook},year={1984},publisher={Addison-Wesley}}\n",
+        )
+        .unwrap();
+        let fixed = compile(&config, Arc::new(AtomicBool::new(false))).unwrap();
+        assert!(fixed.success, "{name}: {}", fixed.log);
+        assert!(
+            fixed
+                .diagnostics
+                .iter()
+                .all(|d| !d.message.contains("does not exist")),
+            "{name}: {:?}",
+            fixed.diagnostics
+        );
+        // The final pass, not the earlier ones that precede the bibliography run.
+        let last = fs::read_to_string(p.directory.join(".folio/main.log")).unwrap();
+        assert!(!last.contains("undefined"), "{name}: {last}");
+    }
+    fs::remove_dir_all(base).unwrap();
+}

@@ -24,6 +24,26 @@ if [ "$folio_os" = Darwin ]; then
   export MACOSX_DEPLOYMENT_TARGET=12.0
 fi
 cargo build --offline --locked --release --manifest-path desktop/Cargo.toml
+# Packaging preserves a settings file someone edited. One that is still an
+# exact copy of an earlier shipped default was never edited, and would pin
+# every old default over the new ones, so it is replaced. A build made from
+# uncommitted sources is recognised by the reference copy shipped beside it.
+folio_refresh_settings() {
+  [ -f "$1" ] && ! cmp -s "$1" folio.toml || return 0
+  if [ -f "$1.default" ] && cmp -s "$1" "$1.default"; then
+    cp folio.toml "$1"
+    echo "Replaced unedited settings from an earlier build: $1"
+    return 0
+  fi
+  for folio_commit in $(git log --format=%H -- folio.toml 2>/dev/null); do
+    if git show "$folio_commit:folio.toml" 2>/dev/null | cmp -s - "$1"; then
+      cp folio.toml "$1"
+      echo "Replaced unedited settings from an earlier build: $1"
+      return 0
+    fi
+  done
+  echo "Kept edited settings (new defaults apply only to keys it omits): $1"
+}
 case "$folio_os" in
   Darwin)
     folio_bundle="$PWD/dist/Folio.app/Contents"
@@ -39,9 +59,11 @@ case "$folio_os" in
       fi
       mv "$folio_bundle/MacOS/folio.toml" "$folio_bundle/Resources/folio.toml"
     fi
+    folio_refresh_settings "$folio_bundle/Resources/folio.toml"
     if [ ! -e "$folio_bundle/Resources/folio.toml" ] && [ ! -L "$folio_bundle/Resources/folio.toml" ]; then
       cp folio.toml "$folio_bundle/Resources/folio.toml"
     fi
+    cp folio.toml "$folio_bundle/Resources/folio.toml.default"
     if [ ! -e "$folio_bundle/MacOS/folio.toml" ] && [ ! -L "$folio_bundle/MacOS/folio.toml" ]; then
       ln -s ../Resources/folio.toml "$folio_bundle/MacOS/folio.toml"
     fi
@@ -79,9 +101,11 @@ PLIST
     folio_bundle="$PWD/dist/folio-linux-$folio_arch"
     mkdir -p "$folio_bundle/licenses"
     cp desktop/target/release/folio runtime/lib/libpdfium.so "$folio_bundle/"
+    folio_refresh_settings "$folio_bundle/folio.toml"
     if [ ! -e "$folio_bundle/folio.toml" ] && [ ! -L "$folio_bundle/folio.toml" ]; then
       cp folio.toml "$folio_bundle/folio.toml"
     fi
+    cp folio.toml "$folio_bundle/folio.toml.default"
     cp -R runtime/licenses/. "$folio_bundle/licenses/"
     cp runtime/LICENSE "$folio_bundle/licenses/PDFium-LICENSE"
     cp LICENSE "$folio_bundle/licenses/Folio-LICENSE"

@@ -1,9 +1,11 @@
 mod file_browser_ui;
+mod help_ui;
 #[cfg(test)]
 mod motion_tests;
 #[cfg(test)]
 mod pdf_fit_tests;
 mod project_ui;
+mod tabs_ui;
 mod workspace_ui;
 use crate::{
     language::Language,
@@ -125,6 +127,11 @@ pub struct App {
     root: Option<PathBuf>,
     managed: Option<ManagedProject>,
     pending_project: Option<PathBuf>,
+    /// Recently opened project folders, most recent first.
+    recent: Vec<PathBuf>,
+    /// Where that history is kept; `None` keeps it in memory only (tests).
+    recent_file: Option<PathBuf>,
+    home: Option<PathBuf>,
     project_popup: Option<ProjectPopup>,
     project_busy: bool,
     export_mode: Bibliography,
@@ -179,6 +186,13 @@ impl App {
     ) -> Self {
         let mut app = Self::with_settings(cc.egui_ctx.clone(), path, loaded.settings);
         app.config_path = loaded.path;
+        app.home = std::env::var_os("HOME").map(PathBuf::from);
+        app.recent_file = crate::recent::file(app.home.as_deref());
+        if let Some(file) = &app.recent_file {
+            app.recent = crate::recent::load(file);
+        }
+        // A project named on the command line was opened before the history.
+        app.remember_project();
         app.config_error = error;
         app.trace = crate::performance::FrameTrace::from_env(cc);
         app
@@ -208,6 +222,9 @@ impl App {
             root: None,
             managed: None,
             pending_project: None,
+            recent: vec![],
+            recent_file: None,
+            home: None,
             project_popup: None,
             project_busy: false,
             export_mode: Bibliography::Keep,
@@ -266,6 +283,28 @@ impl App {
         }
         self.focus_source = true;
         self.completion = None;
+    }
+    /// Puts the open project at the front of the recent list.
+    fn remember_project(&mut self) {
+        let Some(directory) = self.managed.as_ref().map(|p| p.directory.clone()) else {
+            return;
+        };
+        let saved = self
+            .recent_file
+            .as_ref()
+            .map(|file| crate::recent::remember(file, &directory).map_err(|e| (file, e)));
+        match saved {
+            Some(Ok(projects)) => self.recent = projects,
+            other => {
+                // The history is a convenience: when it cannot be written,
+                // opening still worked and this session still lists the project.
+                if let Some(Err((file, error))) = other {
+                    eprintln!("Cannot update {}: {error}", file.display());
+                }
+                self.recent.retain(|p| p != &directory);
+                self.recent.insert(0, directory);
+            }
+        }
     }
     fn open(&mut self, path: PathBuf) {
         self.open_with_choice(path, false);
@@ -655,8 +694,22 @@ impl App {
                             self.diagnostics = result.diagnostics;
                             self.layers.finished(result.success);
                             if result.success {
-                                self.status =
-                                    format!("Typeset in {:.2}s", result.elapsed.as_secs_f32());
+                                self.status = match folio_core::build::missing_bibliographies(
+                                    &self.log,
+                                )
+                                .first()
+                                {
+                                    // The PDF exists, but every citation is [?].
+                                    Some(name) => {
+                                        self.show_log = true;
+                                        format!(
+                                            "Typeset · {name} is missing, citations are undefined"
+                                        )
+                                    }
+                                    None => {
+                                        format!("Typeset in {:.2}s", result.elapsed.as_secs_f32())
+                                    }
+                                };
                                 self.preview.load(result.pdf);
                             } else {
                                 self.status = if result.cancelled {
@@ -841,6 +894,28 @@ impl App {
                             .inner;
                         if response.clicked() {
                             self.perform_action(ui.ctx(), action);
+                        }
+                    }
+                    if !self.recent.is_empty() {
+                        ui.add_space(20.);
+                        ui.label(theme::caption(ui, "RECENT"));
+                        ui.add_space(4.);
+                        let mut chosen = None;
+                        for directory in self.recent.iter().take(6) {
+                            let name = directory.file_name().unwrap_or_default().to_string_lossy();
+                            let parent = directory.parent().unwrap_or(directory);
+                            let location = crate::recent::display(parent, self.home.as_deref());
+                            let response = ui
+                                .add_enabled_ui(self.action_available(Action::OpenProject), |ui| {
+                                    theme::row(ui, &name, &location, "", false)
+                                })
+                                .inner;
+                            if response.clicked() {
+                                chosen = Some(directory.clone());
+                            }
+                        }
+                        if let Some(directory) = chosen {
+                            self.open(directory);
                         }
                     }
                     ui.add_space(24.);
@@ -1235,6 +1310,14 @@ impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let update_start = Instant::now();
         self.poll(ctx);
+        #[cfg(target_os = "macos")]
+        {
+            // The app menu's "Hide" would take Cmd+H before Folio sees it.
+            static RELEASED: std::sync::Once = std::sync::Once::new();
+            if self.settings.keybindings.binds_command(egui::Key::H) {
+                RELEASED.call_once(crate::macos::release_hide_shortcut);
+            }
+        }
         if self.layers.layer == Layer::Source
             && let Some(tab) = self.tabs.get(self.active)
         {
@@ -1380,40 +1463,7 @@ impl eframe::App for App {
                     });
                 });
         }
-        if self.show_help {
-            egui::Window::new("Shortcuts")
-                .open(&mut self.show_help)
-                .default_width(520.)
-                .vscroll(true)
-                .show(ctx, |ui| {
-                    // Editor font preferences must not enlarge the help panel.
-                    ui.style_mut().text_styles.insert(
-                        egui::TextStyle::Monospace, FontId::monospace(14.),
-                    );
-                    if let Some(gesture) = &self.settings.mouse.go {
-                        ui.horizontal_wrapped(|ui| {
-                            ui.monospace(&gesture.label);
-                            ui.label("Go to selection in other layer");
-                        });
-                    }
-                    for action in Action::ALL {
-                        let key = self.settings.keybindings.hint(action);
-                        if key.is_empty() { continue; }
-                        let action = action.label();
-                        ui.horizontal_wrapped(|ui| {
-                            ui.monospace(key);
-                            ui.label(action);
-                        });
-                    }
-                    ui.separator();
-                    if let Some(path) = &self.config_path {
-                        ui.label(format!("Settings: {}", path.display()));
-                    } else {
-                        ui.label("Using bundled defaults. Place folio.toml beside the executable or in ~/.config/folio.");
-                    }
-                    ui.weak("Edit folio.toml and restart to apply changes.");
-                });
-        }
+        self.help_ui(ctx);
         if let Some(error) = self.config_error.clone() {
             egui::Window::new("Settings could not be loaded")
                 .collapsible(false)
@@ -2045,20 +2095,19 @@ mod tests {
         press(&mut app, egui::Key::Tab, egui::Modifiers::CTRL);
         assert_eq!(app.active, 1);
         assert_eq!(app.layers.layer, Layer::Source);
+        // Stepping wraps through the files; the PDF is not one of them.
         press(&mut app, egui::Key::Tab, egui::Modifiers::CTRL);
+        assert_eq!(app.active, 0);
+        assert_eq!(app.layers.layer, Layer::Source);
+        assert_eq!(app.tabs[0].selection, 2..7);
+        press(&mut app, egui::Key::Num2, egui::Modifiers::ALT);
         assert_eq!(app.layers.layer, Layer::Preview);
         assert!(
             app.pending_go.is_none(),
             "switching does not run SyncTeX Go"
         );
         assert!(!app.building, "unchanged preview must be reused");
-        press(&mut app, egui::Key::Tab, egui::Modifiers::CTRL);
-        assert_eq!(app.active, 0);
-        assert_eq!(app.layers.layer, Layer::Source);
-        assert_eq!(app.tabs[0].selection, 2..7);
-        press(&mut app, egui::Key::Num2, egui::Modifiers::COMMAND);
-        assert_eq!(app.layers.layer, Layer::Preview);
-        press(&mut app, egui::Key::Num1, egui::Modifiers::COMMAND);
+        press(&mut app, egui::Key::Num1, egui::Modifiers::ALT);
         assert_eq!(app.layers.layer, Layer::Source);
         assert_eq!(app.active, 0);
         drop(app);
@@ -2732,6 +2781,50 @@ mod tests {
         );
         assert!(app.status.contains("b.tex") && app.status.contains("c.tex"));
         settle(&mut app, &ctx, |a| !a.scanning);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_build_that_skipped_a_missing_bibliography_says_so_and_opens_the_panel() {
+        let dir = std::env::temp_dir().join(format!("folio-missing-bib-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        ManagedProject::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        let result = |log: &str, diagnostics| BuildResult {
+            success: true,
+            cancelled: false,
+            pdf: dir.join(".folio/main.pdf"),
+            log: log.into(),
+            diagnostics,
+            elapsed: Duration::from_millis(1200),
+        };
+        app.tx
+            .send(Event::Build(Ok(result(
+                "Reason: I am configured only to use bibtex/biber if all .bib files exist,\nbut the following didn't:\n  refs.bib\nLatexmk: done\n",
+                vec![Diagnostic {
+                    path: "main.tex".into(),
+                    line: 7,
+                    message: folio_core::build::missing_bibliography_hint("refs.bib"),
+                }],
+            ))))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(app.status.contains("refs.bib"), "{}", app.status);
+        assert!(app.show_log, "the reason must be on screen");
+        assert_eq!(app.diagnostics.len(), 1);
+        // An ordinary successful build reports its time and leaves the panel alone.
+        app.show_log = false;
+        app.tx
+            .send(Event::Build(Ok(result(
+                "Latexmk: All targets are up-to-date\n",
+                vec![],
+            ))))
+            .unwrap();
+        app.poll(&ctx);
+        assert_eq!(app.status, "Typeset in 1.20s");
+        assert!(!app.show_log);
+        drop(app);
         fs::remove_dir_all(dir).unwrap();
     }
 

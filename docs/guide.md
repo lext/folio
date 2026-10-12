@@ -123,8 +123,10 @@ Keep entries in `references.bib` at the project root, and further `.bib` files i
 
 If a bibliography does not appear, open the compiler output from the build panel.
 A citation shown as **[?]** means its key is not in any listed `.bib` file. A
-build that stops with Biber not found needs the `biber` program installed; see
-[development setup](../CONTRIBUTING.md#development-setup) for the package names.
+build that needs a program you do not have, such as `biber`, reports it as the
+first entry in the build panel; `folio-cli doctor` lists which bibliography tools
+are present. See [development setup](../CONTRIBUTING.md#development-setup) for
+the package names.
 
 ### Flat export
 
@@ -171,6 +173,17 @@ CLI equivalents (after `cargo build --bin folio-cli`):
 ./target/debug/folio-cli project export ../paper ../submission-bib --bibliography bibtex
 ```
 
+## Recent projects
+
+Folio remembers the last twelve projects you opened, most recent first. With no
+project open, the welcome screen lists them under **Recent**; with one open, the
+switcher (**Cmd/Ctrl+P**) offers the others as "Recent project" entries. Choosing
+one switches projects, asking first if the current one has unsaved edits. A
+project whose folder has been moved or deleted is no longer listed.
+
+The history is the plain text file `~/.config/folio/recent-projects` on macOS and
+Linux, one folder per line. Delete it to clear the list.
+
 ## Settings
 
 Folio reads **`folio.toml`** at launch, in this order:
@@ -184,13 +197,15 @@ Folio reads **`folio.toml`** at launch, in this order:
 The package includes an editable file beside the executable (on macOS, a link to
 `Contents/Resources/folio.toml`). To use your home configuration instead, copy its
 contents to `~/.config/folio/folio.toml` and remove the adjacent file/link. Packaging
-preserves existing settings. Direct Cargo builds use the same lookup; you can
+preserves settings you edited and replaces a file that is still an unedited copy of
+an earlier default. A settings file overrides only the keys it contains, and a
+shortcut it assigns takes precedence over a tab shortcut added in a later version. Direct Cargo builds use the same lookup; you can
 copy [the default file](../folio.toml) beside the built binary or into the home
 directory above. The working directory is never searched.
 
 All Folio application shortcuts, completion/search keys, navigation clicks and
 wheel modifiers are defined in [folio.toml](../folio.toml), alongside build defaults for newly created project manifests,
-editor font size/line numbers/automatic completion, PDF fit/zoom/cache and initial window size.
+editor font size/line numbers/automatic completion, PDF fit/zoom/cache, whether Folio starts in full screen (`[window] fullscreen`, on by default) and the initial window size.
 `Primary` means Cmd on macOS and Ctrl on Linux; `Ctrl` always means Control.
 Existing projects always compile using their manifest. Old `open`/`new` shortcut
 keys migrate to `open_project`/`new_project`; explicitly configured nonempty
@@ -238,8 +253,12 @@ loaded settings path.
 ## Workflow
 
 One window shows one focused surface: a source file or the PDF. A thin caption
-shows the project and file path, marks unsaved edits, and shows PDF page position.
-There are no permanent action buttons, toolbars, tab strips or status bars. The
+shows the project name followed by its files as tabs, and the PDF page position.
+The tabs are `main`, every `.tex` file in `sections/` in the order `main.tex`
+inputs it, and any other file you have opened; the highlighted tab is
+the current file (it stays highlighted while you view the PDF), and a dot marks unsaved edits. A section has a tab from the
+moment the project opens; click one to switch to it. There are
+no permanent action buttons, toolbars or status bars. The
 caption can move the window; macOS keeps its native window controls in the same
 surface. Linux keeps its window manager decorations. Commands and source/PDF
 switching use a searchable overlay; right-click opens Commands without a shortcut.
@@ -285,9 +304,11 @@ The four settings are `paragraph_down`, `paragraph_up`, `sentence_next`, and
 while the source editor has focus; search, launchers and PDF retain their input.
 
 **Cmd/Ctrl+P** opens a searchable switcher for open buffers, project files and the
-PDF. **Ctrl+Tab / Ctrl+Shift+Tab** cycle through open source files and PDF, retaining
-each buffer's selection and scroll position. **Cmd/Ctrl+1** returns to the last
-source file; **Cmd/Ctrl+2** opens the PDF. Switching surfaces does not perform a
+PDF. **Ctrl+Tab / Ctrl+Shift+Tab** step right and left through the tabs,
+sections included, wrapping at the ends; each buffer keeps its selection and scroll
+position. The PDF is a view of the paper, not a tab. **Cmd/Ctrl+1 … 9** jump to a tab by its position in the strip: 1 is `main`,
+2 the first section, and so on. **Option/Alt+1** returns to the last
+source file; **Option/Alt+2** opens the PDF. Switching surfaces does not perform a
 SyncTeX jump.
 
 Entering PDF saves and typesets stale content with pdfLaTeX, XeLaTeX or LuaLaTeX.
@@ -392,10 +413,12 @@ remain editable; the comparison panel explains that no repository was found.
 
 | Shortcut | Action |
 | --- | --- |
+| Cmd/Ctrl + H | Shortcut sheet: every bound command, grouped; the same key or Esc closes it |
 | Cmd/Ctrl + P | Switch file or PDF |
 | Cmd/Ctrl + Shift + P | Search commands |
-| Ctrl + Tab / Ctrl + Shift + Tab | Next / previous surface |
-| Cmd/Ctrl + 1 / Cmd/Ctrl + 2 | Source / PDF |
+| Ctrl + Tab / Ctrl + Shift + Tab | Next / previous tab (sections, open files) |
+| Cmd/Ctrl + 1 … 9 | Go to that tab (1 is `main`, then the sections) |
+| Option/Alt + 1 / Option/Alt + 2 | Source / PDF |
 | Cmd/Ctrl + left double-click | Go to the selection in the other layer |
 | Cmd/Ctrl + O | Open a project |
 | Cmd/Ctrl + N | Create a project |

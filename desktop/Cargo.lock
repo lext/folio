@@ -1000,6 +1000,7 @@ dependencies = [
  "cc",
  "eframe",
  "folio-core",
+ "objc",
  "pdfium-render",
  "rfd",
  "toml_edit",

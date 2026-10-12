@@ -118,6 +118,44 @@ class PackagingTests(unittest.TestCase):
             self.assertTrue(packed.getmember("folio-linux-x86_64/licenses/PDFium-LICENSE").isfile())
             self.assertTrue(packed.getmember("folio-linux-x86_64/licenses/Folio-LICENSE").isfile())
 
+    def test_unedited_settings_from_an_earlier_build_are_replaced_and_edited_ones_kept(self):
+        git = lambda *args: subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@example.com",
+             "-c", "commit.gpgsign=false", *args],
+            cwd=self.root, check=True, capture_output=True)
+        git("init", "--quiet")
+        (self.root / "folio.toml").write_text("source = 1\n")
+        git("add", "folio.toml")
+        git("commit", "--quiet", "-m", "old defaults")
+        (self.root / "folio.toml").write_text("source = 2\ntab = 1\n")
+        git("commit", "--quiet", "-am", "new defaults")
+        bundle = self.root / "dist/folio-linux-x86_64"
+        bundle.mkdir(parents=True)
+        shipped = bundle / "folio.toml"
+        # An exact copy of an earlier default was never edited: refresh it.
+        shipped.write_text("source = 1\n")
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(shipped.read_text(), "source = 2\ntab = 1\n")
+        self.assertIn("Replaced unedited settings", result.stdout)
+        # Current defaults are left alone, silently.
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertNotIn("settings", result.stdout)
+        # Anything else is the user's and is preserved, with a notice.
+        shipped.write_text("source = 1\n# mine\n")
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(shipped.read_text(), "source = 1\n# mine\n")
+        self.assertIn("Kept edited settings", result.stdout)
+        # A build from uncommitted defaults is known by its reference copy.
+        shipped.write_text("source = 3\n")
+        (bundle / "folio.toml.default").write_text("source = 3\n")
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(shipped.read_text(), "source = 2\ntab = 1\n")
+        self.assertEqual((bundle / "folio.toml.default").read_text(), "source = 2\ntab = 1\n")
+
     def test_missing_runtime_fails_before_expensive_build(self):
         (self.root / "runtime/lib/libpdfium.so").unlink()
         result = self.package()

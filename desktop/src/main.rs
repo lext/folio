@@ -4,12 +4,15 @@ mod git_ui;
 mod language;
 mod launcher;
 mod layers;
+#[cfg(target_os = "macos")]
+mod macos;
 mod navigation;
 mod page_layout;
 mod pdf_worker;
 mod performance;
 mod preview;
 mod project;
+mod recent;
 mod recovery;
 mod settings;
 mod theme;
@@ -38,6 +41,7 @@ fn main() -> eframe::Result<()> {
         },
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size(loaded.settings.window_size)
+            .with_fullscreen(loaded.settings.fullscreen)
             .with_min_inner_size([1000., 600.])
             .with_app_id("dev.folio.editor")
             .with_fullsize_content_view(true)

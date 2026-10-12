@@ -1,8 +1,5 @@
 use super::*;
-use crate::{
-    launcher::{Entry, Launcher, Mode, Outcome, Target},
-    workspace::Surface,
-};
+use crate::launcher::{Entry, Launcher, Mode, Outcome, Target};
 
 impl App {
     pub(super) fn action_available(&self, action: Action) -> bool {
@@ -11,6 +8,7 @@ impl App {
                 self.tabs.get(self.active).is_some() && self.layers.layer == Layer::Source
             }
             Action::ProjectFiles => self.root.is_some(),
+            action if action.tab().is_some() => self.managed.is_some(),
             Action::Preview | Action::Recompile | Action::Go => {
                 self.root.is_some() && !self.exporting
             }
@@ -60,6 +58,13 @@ impl App {
             self.pending_go = None;
             return;
         }
+        if let Some(index) = action.tab() {
+            // A position past the last tab does nothing.
+            if let Some(path) = self.tab_paths().into_iter().nth(index) {
+                self.open_document(path);
+            }
+            return;
+        }
         match action {
             Action::Switcher => self.open_launcher(Mode::Surfaces),
             Action::Commands => self.open_launcher(Mode::Commands),
@@ -77,18 +82,13 @@ impl App {
             Action::Source => self.source(),
             Action::Preview => self.enter_preview(ctx, false),
             Action::NextSurface | Action::PreviousSurface => {
-                let current = if self.layers.layer == Layer::Preview {
-                    Surface::Preview
-                } else {
-                    Surface::Source(self.active)
-                };
-                match current.cycle(self.tabs.len(), action == Action::PreviousSurface) {
-                    Some(Surface::Source(i)) => {
-                        self.active = i;
-                        self.source();
-                    }
-                    Some(Surface::Preview) => self.enter_preview(ctx, false),
-                    None => {}
+                // Walk the tabs, so every section is one step away. The PDF is
+                // another view of the paper, not a tab; stepping leaves it.
+                let tabs = self.tab_paths();
+                let current = self.active_tab(&tabs).unwrap_or(0);
+                let backwards = action == Action::PreviousSurface;
+                if let Some(next) = crate::workspace::step(current, tabs.len(), backwards) {
+                    self.open_document(tabs[next].clone());
                 }
             }
             Action::Go => self.go(ctx),
@@ -134,7 +134,8 @@ impl App {
             }
             Action::CancelBuild => self.cancel.store(true, Ordering::Relaxed),
             Action::Reload => self.reload_dialog = true,
-            Action::Help => self.show_help = true,
+            // The same key closes the sheet again.
+            Action::Help => self.show_help = !self.show_help,
             Action::PdfZoomIn
             | Action::PdfZoomOut
             | Action::PdfFit
@@ -210,10 +211,30 @@ impl App {
                         target: Target::Action(action),
                     });
                 }
+                // Other recent projects, so switching papers is one search away.
+                let current = self.managed.as_ref().map(|p| &p.directory);
+                for directory in self.recent.iter().filter(|d| Some(*d) != current) {
+                    entries.push(Entry {
+                        title: directory
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .into_owned(),
+                        detail: format!(
+                            "Recent project · {}",
+                            crate::recent::display(directory, self.home.as_deref())
+                        ),
+                        target: Target::Project(directory.clone()),
+                    });
+                }
             }
             Mode::Commands => {
                 for action in Action::ALL.into_iter().filter(|a| {
-                    a.is_command() && *a != Action::Commands && self.action_available(*a)
+                    // Tab positions are shortcuts; the switcher names the files.
+                    a.is_command()
+                        && a.tab().is_none()
+                        && *a != Action::Commands
+                        && self.action_available(*a)
                 }) {
                     entries.push(Entry {
                         title: action.label().into(),
@@ -262,6 +283,11 @@ impl App {
                 self.focus_source = self.layers.layer == Layer::Source;
                 match target {
                     Target::File(path) => self.open_document(path),
+                    Target::Project(directory) => {
+                        if self.action_available(Action::OpenProject) {
+                            self.open(directory);
+                        }
+                    }
                     Target::Preview => self.enter_preview(ctx, false),
                     Target::Action(action) => self.perform_action(ctx, action),
                     Target::Line(line) => {
@@ -279,8 +305,8 @@ impl App {
             _ => {}
         }
     }
-    fn caption_ui(&self, ctx: &egui::Context) {
-        egui::TopBottomPanel::top("workspace-caption")
+    fn caption_ui(&mut self, ctx: &egui::Context) {
+        let chosen = egui::TopBottomPanel::top("workspace-caption")
             .exact_height(38.)
             .show_separator_line(false)
             .frame(egui::Frame::new().fill(theme::palette(&ctx.style().visuals).canvas))
@@ -298,11 +324,13 @@ impl App {
                     ));
                 }
                 let Some(project) = &self.managed else {
-                    return;
+                    return None;
                 };
                 // Keep the native macOS traffic lights; only the old titlebar
                 // background/title are hidden. Linux keeps its WM decorations.
-                let left = rect.left() + if cfg!(target_os = "macos") { 88. } else { 24. };
+                // Full screen hides the lights, so nothing is reserved for them.
+                let fullscreen = ctx.input(|i| i.viewport().fullscreen.unwrap_or(false));
+                let left = rect.left() + header_inset(cfg!(target_os = "macos"), fullscreen);
                 let right = rect.right() - 24.;
                 let meta = if self.layers.layer == Layer::Preview {
                     format!("PDF   {}", self.preview.position_label())
@@ -336,32 +364,20 @@ impl App {
                     FontId::proportional(12.),
                     theme::of(ui).border,
                 );
-                let path = if self.layers.layer == Layer::Preview {
-                    "main.pdf".into()
-                } else {
-                    self.tabs
-                        .get(self.active)
-                        .map(|t| {
-                            format!(
-                                "{}{}",
-                                self.relative_path(&t.doc.path),
-                                if t.doc.is_dirty() { "  •" } else { "" }
-                            )
-                        })
-                        .unwrap_or_default()
-                };
-                let clip = egui::Rect::from_min_max(
-                    egui::pos2(next + 18., rect.top()),
-                    egui::pos2(meta_rect.left() - 24., rect.bottom()),
-                );
-                ui.painter().with_clip_rect(clip).text(
-                    egui::pos2(next + 18., rect.center().y),
-                    egui::Align2::LEFT_CENTER,
-                    path,
-                    FontId::proportional(12.),
-                    theme::of(ui).text,
-                );
-            });
+                // The files follow the project name as tabs; the highlighted
+                // one is the current file, so no separate path is shown.
+                self.tabs_ui(
+                    ui,
+                    egui::Rect::from_min_max(
+                        egui::pos2(next + 14., rect.top()),
+                        egui::pos2(meta_rect.left() - 24., rect.bottom()),
+                    ),
+                )
+            })
+            .inner;
+        if let Some(super::tabs_ui::Chosen(path)) = chosen {
+            self.open_document(path);
+        }
     }
     pub(super) fn workspace_ui(&mut self, ctx: &egui::Context) {
         // Consume launcher navigation before a focused editor can see Enter/Tab.
@@ -501,5 +517,20 @@ impl App {
                 );
             }
         }
+    }
+}
+/// Space left of the header text: room for the macOS window buttons, which
+/// exist only while the window is not in full screen.
+fn header_inset(macos: bool, fullscreen: bool) -> f32 {
+    if macos && !fullscreen { 88. } else { 24. }
+}
+#[cfg(test)]
+mod tests {
+    use super::header_inset;
+    #[test]
+    fn header_reserves_room_for_window_buttons_only_while_they_are_shown() {
+        assert_eq!(header_inset(true, false), 88.);
+        assert_eq!(header_inset(true, true), 24.);
+        assert_eq!(header_inset(false, false), 24.);
     }
 }

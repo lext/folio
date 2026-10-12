@@ -98,8 +98,11 @@ pub fn flat(
             original.use_latexmkrc = false;
             let built = build::compile(&original, cancel.clone())?;
             if !built.success {
+                let hint = build::missing_tool(&built.log)
+                    .map(|tool| format!("{}\n", build::missing_tool_hint(tool)))
+                    .unwrap_or_default();
                 return Err(error(format!(
-                    "Original {root}.tex did not build; export cancelled.\n{}",
+                    "Original {root}.tex did not build; export cancelled.\n{hint}{}",
                     built.log
                 )));
             }

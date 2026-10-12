@@ -16,21 +16,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         None | Some("--help" | "-h") => println!("{usage}"),
         Some("doctor") if args.len() == 1 => {
             let mut missing = false;
-            for name in [
-                "latexmk",
-                "pdflatex",
-                "xelatex",
-                "lualatex",
-                "synctex",
-                "latexpand",
+            // Bibliography tools are needed only by documents that cite.
+            for (name, purpose) in [
+                ("latexmk", None),
+                ("pdflatex", None),
+                ("xelatex", None),
+                ("lualatex", None),
+                ("synctex", None),
+                ("latexpand", None),
+                ("bibtex", Some("BibTeX bibliographies")),
+                ("biber", Some("BibLaTeX bibliographies")),
             ] {
                 let path = build::executable(name);
                 let exists = path.is_file();
-                missing |= !exists;
+                missing |= !exists && purpose.is_none();
                 println!(
-                    "{}  {name}: {}",
-                    if exists { "OK" } else { "MISSING" },
-                    path.display()
+                    "{}  {name}: {}{}",
+                    match (exists, purpose) {
+                        (true, _) => "OK",
+                        (false, None) => "MISSING",
+                        (false, Some(_)) => "ABSENT",
+                    },
+                    path.display(),
+                    purpose
+                        .filter(|_| !exists)
+                        .map(|p| format!(" (needed for {p})"))
+                        .unwrap_or_default()
                 );
             }
             if missing {
@@ -47,7 +58,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let result = build::compile(&config, Arc::new(AtomicBool::new(false)))?;
             if !result.success {
                 eprintln!("{}", result.log);
-                return Err(io::Error::other("LaTeX build failed").into());
+                return Err(io::Error::other(match build::missing_tool(&result.log) {
+                    Some(tool) => format!("LaTeX build failed: {}", build::missing_tool_hint(tool)),
+                    None => "LaTeX build failed".into(),
+                })
+                .into());
+            }
+            for name in build::missing_bibliographies(&result.log) {
+                eprintln!("Warning: {}", build::missing_bibliography_hint(name));
             }
             println!("{}", result.pdf.display());
         }

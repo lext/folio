@@ -19,6 +19,10 @@ toml_edit = { version = "=0.25.17", default-features = false, features = ["parse
 # eframe's defaults are off; wgpu needs explicit native GPU backends.
 wgpu = { version = "=27.0.1", default-features = false, features = ["metal", "vulkan", "gles"] }
 
+# Already in the tree through Metal; used to free Cmd+H from the app menu.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
 [build-dependencies]
 cc = "1"
 

@@ -63,9 +63,18 @@ pub enum Action {
     SentenceNext,
     SentencePrevious,
     PdfFitPage,
+    Tab1,
+    Tab2,
+    Tab3,
+    Tab4,
+    Tab5,
+    Tab6,
+    Tab7,
+    Tab8,
+    Tab9,
 }
 impl Action {
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 58] = [
         Self::Save,
         Self::Recompile,
         Self::Find,
@@ -115,6 +124,15 @@ impl Action {
         Self::SentenceNext,
         Self::SentencePrevious,
         Self::PdfFitPage,
+        Self::Tab1,
+        Self::Tab2,
+        Self::Tab3,
+        Self::Tab4,
+        Self::Tab5,
+        Self::Tab6,
+        Self::Tab7,
+        Self::Tab8,
+        Self::Tab9,
     ];
     pub fn name(self) -> &'static str {
         match self {
@@ -167,6 +185,15 @@ impl Action {
             Self::SentenceNext => "sentence_next",
             Self::SentencePrevious => "sentence_previous",
             Self::PdfFitPage => "pdf_fit_page",
+            Self::Tab1 => "tab_1",
+            Self::Tab2 => "tab_2",
+            Self::Tab3 => "tab_3",
+            Self::Tab4 => "tab_4",
+            Self::Tab5 => "tab_5",
+            Self::Tab6 => "tab_6",
+            Self::Tab7 => "tab_7",
+            Self::Tab8 => "tab_8",
+            Self::Tab9 => "tab_9",
         }
     }
     pub fn motion(self) -> Option<crate::language::Motion> {
@@ -178,6 +205,10 @@ impl Action {
             Self::SentencePrevious => Some(Motion::SentenceStart),
             _ => None,
         }
+    }
+    /// Zero-based position in the tab strip that this action jumps to.
+    pub fn tab(self) -> Option<usize> {
+        (self as usize).checked_sub(Self::Tab1 as usize)
     }
     pub fn is_pdf_fit(self) -> bool {
         matches!(self, Self::PdfFit | Self::PdfFitPage)
@@ -218,8 +249,8 @@ impl Action {
             Self::Commands => "Commands",
             Self::Source => "Focus source",
             Self::Preview => "Focus PDF preview",
-            Self::NextSurface => "Next surface",
-            Self::PreviousSurface => "Previous surface",
+            Self::NextSurface => "Next tab",
+            Self::PreviousSurface => "Previous tab",
             Self::LauncherNext => "Next launcher result",
             Self::LauncherPrevious => "Previous launcher result",
             Self::LauncherAccept => "Open launcher result",
@@ -249,6 +280,15 @@ impl Action {
             Self::SentenceNext => "Move to sentence end",
             Self::SentencePrevious => "Move to sentence start",
             Self::PdfFitPage => "PDF: fit page",
+            Self::Tab1 => "Go to tab 1",
+            Self::Tab2 => "Go to tab 2",
+            Self::Tab3 => "Go to tab 3",
+            Self::Tab4 => "Go to tab 4",
+            Self::Tab5 => "Go to tab 5",
+            Self::Tab6 => "Go to tab 6",
+            Self::Tab7 => "Go to tab 7",
+            Self::Tab8 => "Go to tab 8",
+            Self::Tab9 => "Go to tab 9",
         }
     }
 }
@@ -272,13 +312,34 @@ impl Keybindings {
         let bindings = &self.bindings[action as usize];
         ctx.input_mut(|input| {
             let mut consumed = false;
+            let mut option = false;
             input.events.retain(|event| {
                 let matches = matches!(event, egui::Event::Key { key, modifiers, pressed: true, .. }
                     if bindings.iter().any(|b| b.presses == 1 && b.key == *key && modifiers_match(*modifiers, b.modifiers)));
                 consumed |= matches;
+                option |= matches
+                    && matches!(event, egui::Event::Key { modifiers, .. } if modifiers.alt && !modifiers.command && !modifiers.ctrl);
                 !matches
             });
+            // macOS also types a character for an Option chord (Option+1 is
+            // "¡"); a shortcut that fired must not insert it into the text.
+            if option {
+                input
+                    .events
+                    .retain(|event| !matches!(event, egui::Event::Text(_)));
+            }
             consumed
+        })
+    }
+    /// Whether any action is bound to Cmd plus this key alone.
+    #[cfg(target_os = "macos")]
+    pub fn binds_command(&self, key: Key) -> bool {
+        self.bindings.iter().flatten().any(|b| {
+            b.key == key
+                && (b.modifiers.command || b.modifiers.mac_cmd)
+                && !b.modifiers.alt
+                && !b.modifiers.shift
+                && !b.modifiers.ctrl
         })
     }
     pub fn hint(&self, action: Action) -> String {
@@ -334,6 +395,7 @@ pub struct Settings {
     pub engine: Engine,
     pub build_timeout: std::time::Duration,
     pub window_size: [f32; 2],
+    pub fullscreen: bool,
 }
 #[derive(Debug)]
 pub struct Loaded {
@@ -351,6 +413,8 @@ impl Settings {
             .parse::<DocumentMut>()
             .map_err(|e| e.to_string())?;
         let overrides = source.parse::<DocumentMut>().map_err(|e| e.to_string())?;
+        // Bindings the file sets itself; the rest come from bundled defaults.
+        let mut chosen = std::collections::HashSet::new();
         for (section, item) in overrides.iter() {
             let target = doc
                 .get_mut(section)
@@ -400,6 +464,9 @@ impl Settings {
                 if !target.contains_key(key) {
                     return Err(format!("Unknown setting {section}.{key}"));
                 }
+                if section == "keybindings" {
+                    chosen.insert(key.to_owned());
+                }
                 target[key] = value.clone();
             }
         }
@@ -416,7 +483,8 @@ impl Settings {
                 ));
             }
         }
-        validate_conflicts(&bindings, cfg!(target_os = "macos"))?;
+        let chosen = Action::ALL.map(|a| chosen.contains(a.name()));
+        validate_conflicts(&mut bindings, &chosen, cfg!(target_os = "macos"))?;
         let gesture = string(&doc["mouse"]["go"], "mouse.go")?;
         let go = if gesture.is_empty() {
             None
@@ -493,6 +561,9 @@ impl Settings {
                 _ => return Err("theme.mode: expected dark, light or system".into()),
             },
             engine,
+            fullscreen: doc["window"]["fullscreen"]
+                .as_bool()
+                .ok_or("window.fullscreen: expected true or false")?,
             window_size: [
                 number("window", "width", 1000., 8192.)?,
                 number("window", "height", 600., 8192.)?,
@@ -666,7 +737,14 @@ pub fn modifiers_match(actual: Modifiers, expected: Modifiers) -> bool {
     physical_modifiers(actual, cfg!(target_os = "macos"))
         == physical_modifiers(expected, cfg!(target_os = "macos"))
 }
-fn validate_conflicts(bindings: &[Vec<Chord>; Action::ALL.len()], mac: bool) -> Result<(), String> {
+/// Rejects two actions on one chord. The exception is a default added after
+/// settings files were already in use (the tab positions): it gives way to a
+/// chord the file chose, so a file written for an older Folio keeps loading.
+fn validate_conflicts(
+    bindings: &mut [Vec<Chord>; Action::ALL.len()],
+    chosen: &[bool; Action::ALL.len()],
+    mac: bool,
+) -> Result<(), String> {
     let scope = |action| match action {
         Action::CompletionNext
         | Action::CompletionPrevious
@@ -687,13 +765,23 @@ fn validate_conflicts(bindings: &[Vec<Chord>; Action::ALL.len()], mac: bool) -> 
             if scope(a) & scope(b) == 0 {
                 continue;
             }
-            for x in &bindings[a as usize] {
-                if bindings[b as usize].iter().any(|y| {
-                    x.key == y.key
-                        && !(a.is_pdf_fit() && b.is_pdf_fit() && x.presses != y.presses)
-                        && physical_modifiers(x.modifiers, mac)
-                            == physical_modifiers(y.modifiers, mac)
-                }) {
+            let same = |x: &Chord, y: &Chord| {
+                x.key == y.key
+                    && !(a.is_pdf_fit() && b.is_pdf_fit() && x.presses != y.presses)
+                    && physical_modifiers(x.modifiers, mac) == physical_modifiers(y.modifiers, mac)
+            };
+            let (first, second) = (bindings[a as usize].clone(), bindings[b as usize].clone());
+            let Some(x) = first.iter().find(|x| second.iter().any(|y| same(x, y))) else {
+                continue;
+            };
+            match (chosen[a as usize], chosen[b as usize]) {
+                (true, false) if b.tab().is_some() => {
+                    bindings[b as usize].retain(|y| !first.iter().any(|x| same(x, y)));
+                }
+                (false, true) if a.tab().is_some() => {
+                    bindings[a as usize].retain(|x| !second.iter().any(|y| same(x, y)));
+                }
+                _ => {
                     return Err(format!(
                         "keybindings.{} conflicts with keybindings.{}: {}",
                         a.name(),
@@ -738,7 +826,8 @@ mod tests {
             );
         }
         for mac in [true, false] {
-            validate_conflicts(&defaults.keybindings.bindings, mac).unwrap();
+            let mut bindings = defaults.keybindings.bindings.clone();
+            validate_conflicts(&mut bindings, &[false; Action::ALL.len()], mac).unwrap();
         }
     }
     #[test]
@@ -1008,13 +1097,208 @@ mod tests {
         );
     }
     #[test]
+    fn a_settings_file_from_an_older_version_keeps_its_bindings_over_new_defaults() {
+        // 0.9.5 shipped these; Primary+1..9 later became the tab defaults.
+        let old =
+            Settings::parse("[keybindings]\nsource=['Primary+1']\npreview=['Primary+2']").unwrap();
+        assert_eq!(old.keybindings.chords(Action::Source)[0].key, Key::Num1);
+        assert!(old.keybindings.chords(Action::Tab1).is_empty());
+        assert!(old.keybindings.chords(Action::Tab2).is_empty());
+        assert_eq!(old.keybindings.chords(Action::Tab3)[0].key, Key::Num3);
+        // Two bindings the file itself gives one chord are still an error.
+        let error = Settings::parse("[keybindings]\nsource=['Primary+1']\ntab_1=['Primary+1']")
+            .unwrap_err();
+        assert!(error.contains("conflicts"), "{error}");
+        // Taking an established default's chord is still reported, not hidden.
+        assert!(Settings::parse("[keybindings]\ntab_1=['Primary+S']").is_err());
+    }
+    #[test]
+    fn folio_starts_in_full_screen_unless_the_settings_say_otherwise() {
+        assert!(Settings::default().fullscreen);
+        assert!(
+            !Settings::parse("[window]\nfullscreen=false")
+                .unwrap()
+                .fullscreen
+        );
+        assert!(Settings::parse("[window]\nfullscreen='yes'").is_err());
+    }
+    #[test]
+    fn the_action_table_is_indexed_consistently_and_names_are_unique() {
+        // Bindings are stored by discriminant and filled by walking ALL.
+        for (index, action) in Action::ALL.into_iter().enumerate() {
+            assert_eq!(action as usize, index, "{}", action.name());
+        }
+        let mut names: Vec<&str> = Action::ALL.iter().map(|a| a.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), Action::ALL.len());
+        // Only the nine tab actions report a position, in order.
+        let tabs: Vec<(String, usize)> = Action::ALL
+            .into_iter()
+            .filter_map(|a| a.tab().map(|i| (a.name().to_owned(), i)))
+            .collect();
+        let expected: Vec<(String, usize)> =
+            (0..9).map(|i| (format!("tab_{}", i + 1), i)).collect();
+        assert_eq!(tabs, expected);
+        let defaults = Settings::default();
+        for (action, index) in Action::ALL
+            .into_iter()
+            .filter_map(|a| a.tab().map(|i| (a, i)))
+        {
+            let chords = defaults.keybindings.chords(action);
+            assert_eq!(chords.len(), 1);
+            assert_eq!(chords[0].key.name(), (index + 1).to_string());
+            assert_eq!(chords[0].modifiers, Modifiers::COMMAND);
+        }
+        assert_eq!(
+            defaults.keybindings.chords(Action::Source)[0].modifiers,
+            Modifiers::ALT
+        );
+        assert_eq!(
+            defaults.keybindings.chords(Action::Preview)[0].modifiers,
+            Modifiers::ALT
+        );
+        assert_eq!(defaults.keybindings.chords(Action::Help)[0].key, Key::H);
+    }
+    #[test]
+    fn the_settings_file_shipped_with_0_9_5_still_loads_and_keeps_its_choices() {
+        // That file was a full copy of the defaults of its day: no tab
+        // shortcuts, no help key, no [theme], no fullscreen, Cmd+1/2 for views.
+        let old: String = DEFAULT_TOML
+            .lines()
+            .filter(|line| !line.starts_with("tab_") && !line.starts_with("fullscreen"))
+            .map(|line| match line {
+                l if l.starts_with("source = ") => "source = [\"Primary+1\"]".into(),
+                l if l.starts_with("preview = ") => "preview = [\"Primary+2\"]".into(),
+                l if l.starts_with("help = ") => "help = []".into(),
+                l => l.to_owned(),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let old = old.split("[theme]").next().unwrap().to_owned();
+        assert!(!old.contains("tab_1") && !old.contains("[theme]"));
+        let settings = Settings::parse(&old).expect("an old full settings file must load");
+        let source = &settings.keybindings.chords(Action::Source)[0];
+        assert_eq!(
+            (source.key, source.modifiers),
+            (Key::Num1, Modifiers::COMMAND)
+        );
+        assert!(settings.keybindings.chords(Action::Tab1).is_empty());
+        assert!(settings.keybindings.chords(Action::Tab2).is_empty());
+        assert_eq!(settings.keybindings.chords(Action::Tab9).len(), 1);
+        assert!(settings.keybindings.chords(Action::Help).is_empty());
+        assert!(
+            settings.fullscreen,
+            "a key the old file lacks takes the new default"
+        );
+    }
+    #[test]
+    fn option_swallowing_is_limited_to_the_chord_that_fired() {
+        let settings =
+            Settings::parse("[keybindings]\nparagraph_down=['Alt+Shift+D']\ngit=['Ctrl+Alt+G']")
+                .unwrap();
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let typed = |ctx: &egui::Context| {
+            ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_))))
+        };
+        let ctx = egui::Context::default();
+        // Option held for a character that is not a shortcut: the text stays.
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![key(Key::E, Modifiers::ALT), egui::Event::Text("é".into())],
+                ..Default::default()
+            },
+            |ctx| {
+                assert!(!settings.keybindings.consume(ctx, Action::Source));
+                assert!(!settings.keybindings.consume(ctx, Action::ParagraphDown));
+                assert!(typed(ctx), "accented input must still be typed");
+            },
+        );
+        // Option+Shift chord fires and takes its character with it.
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![
+                    key(Key::D, Modifiers::ALT | Modifiers::SHIFT),
+                    egui::Event::Text("Î".into()),
+                ],
+                ..Default::default()
+            },
+            |ctx| {
+                assert!(settings.keybindings.consume(ctx, Action::ParagraphDown));
+                assert!(!typed(ctx));
+            },
+        );
+        // A released key is not a press.
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![egui::Event::Key {
+                    key: Key::Num1,
+                    physical_key: None,
+                    pressed: false,
+                    repeat: false,
+                    modifiers: Modifiers::ALT,
+                }],
+                ..Default::default()
+            },
+            |ctx| assert!(!settings.keybindings.consume(ctx, Action::Source)),
+        );
+    }
+    #[test]
+    fn an_option_shortcut_swallows_the_character_macos_types_for_it() {
+        let settings = Settings::default();
+        let key = |key, modifiers| egui::Event::Key {
+            key,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers,
+        };
+        let text = |ctx: &egui::Context| {
+            ctx.input(|i| i.events.iter().any(|e| matches!(e, egui::Event::Text(_))))
+        };
+        let ctx = egui::Context::default();
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![
+                    key(Key::Num2, Modifiers::ALT),
+                    egui::Event::Text("™".into()),
+                ],
+                ..Default::default()
+            },
+            |ctx| {
+                assert!(settings.keybindings.consume(ctx, Action::Preview));
+                assert!(!text(ctx), "Option+2 must not also type a character");
+            },
+        );
+        // Ordinary typing next to a non-Option shortcut is left alone.
+        let _ = ctx.run(
+            egui::RawInput {
+                events: vec![
+                    key(Key::S, Modifiers::COMMAND),
+                    egui::Event::Text("a".into()),
+                ],
+                ..Default::default()
+            },
+            |ctx| {
+                assert!(settings.keybindings.consume(ctx, Action::Save));
+                assert!(text(ctx));
+            },
+        );
+    }
+    #[test]
     fn primary_alias_conflicts_are_checked_for_macos_and_linux() {
         let settings = Settings::default();
         for (mac, alias) in [(true, "Cmd+O"), (false, "Ctrl+O")] {
             let mut bindings = settings.keybindings.bindings.clone();
             bindings[Action::Save as usize] = vec![parse_chord(alias).unwrap()];
             assert!(
-                validate_conflicts(&bindings, mac)
+                validate_conflicts(&mut bindings, &[false; Action::ALL.len()], mac)
                     .unwrap_err()
                     .contains("save")
             );

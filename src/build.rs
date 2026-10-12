@@ -134,6 +134,37 @@ pub fn parse_diagnostics(log: &str) -> Vec<Diagnostic> {
     }
     result
 }
+/// The program a shell reported as absent, as in `sh: biber: command not found`
+/// or dash's `sh: 1: biber: not found`. latexmk only says that the rule failed.
+pub fn missing_tool(log: &str) -> Option<&str> {
+    log.lines().find_map(|line| {
+        let name = line
+            .strip_suffix(": command not found")
+            .or_else(|| line.strip_suffix(": not found"))?
+            .rsplit(": ")
+            .next()?;
+        (!name.is_empty() && !name.contains(char::is_whitespace)).then_some(name)
+    })
+}
+/// Bibliography files the document names that do not exist. latexmk then
+/// skips BibTeX/Biber without failing, leaving every citation undefined.
+pub fn missing_bibliographies(log: &str) -> Vec<&str> {
+    log.lines()
+        .skip_while(|line| !line.starts_with("but the following didn't:"))
+        .skip(1)
+        .take_while(|line| line.starts_with("  "))
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .collect()
+}
+pub fn missing_bibliography_hint(name: &str) -> String {
+    format!(
+        "Bibliography file `{name}` does not exist, so the bibliography was skipped and citations are undefined."
+    )
+}
+pub fn missing_tool_hint(tool: &str) -> String {
+    format!("`{tool}` is not installed or not on PATH; run `folio-cli doctor`.")
+}
 #[derive(Debug)]
 pub struct BuildResult {
     pub success: bool,
@@ -223,15 +254,49 @@ fn compile_with_program(
         thread::sleep(Duration::from_millis(30));
     };
     let mut log = String::from_utf8_lossy(&fs::read(log_path)?).into_owned();
+    let mut diagnostics = parse_diagnostics(&log);
+    let success = success && config.pdf_path().is_file();
+    let missing = (!success && !cancelled)
+        .then(|| missing_tool(&log))
+        .flatten();
     if cancelled {
         log.push_str("\nBuild cancelled or timed out.\n");
+    } else if let Some(tool) = missing {
+        // Otherwise the cause is one shell line deep inside the latexmk log.
+        // The marker stays: latexmk records the failed rule and would refuse
+        // to rerun it after the program is installed, so retry from clean.
+        diagnostics.insert(
+            0,
+            Diagnostic {
+                path: config.root.file_name().unwrap_or_default().into(),
+                line: 1,
+                message: missing_tool_hint(tool),
+            },
+        );
     } else {
         // latexmk ran to completion, so its auxiliary files are consistent even
         // when the document has an error. Only a killed run needs a clean retry.
         fs::remove_file(&interrupted)?;
     }
-    let diagnostics = parse_diagnostics(&log);
-    let success = success && config.pdf_path().is_file();
+    if !cancelled {
+        // A successful build too: the PDF is written, with [?] for citations.
+        let source = fs::read_to_string(&config.root).unwrap_or_default();
+        for name in missing_bibliographies(&log).into_iter().rev() {
+            let stem = name.strip_suffix(".bib").unwrap_or(name);
+            let line = source.lines().position(|line| {
+                (line.contains("\\bibliography{") || line.contains("\\addbibresource"))
+                    && line.contains(stem)
+            });
+            diagnostics.insert(
+                0,
+                Diagnostic {
+                    path: config.root.file_name().unwrap_or_default().into(),
+                    line: line.map_or(1, |index| index + 1),
+                    message: missing_bibliography_hint(name),
+                },
+            );
+        }
+    }
     let pdf = if success {
         let pdf_changed = previous_pdf != fingerprint(&config.pdf_path());
         let mut maps = Vec::new();
@@ -444,7 +509,9 @@ mod tests {
         }
         fn config(&self) -> BuildConfig {
             let mut config = BuildConfig::new(self.0.join("main.tex"), Engine::PdfLatex);
-            config.timeout = Duration::from_secs(2);
+            // Generous: these scripts finish at once, and a short limit made
+            // every test here fail whenever the machine was busy.
+            config.timeout = Duration::from_secs(60);
             config
         }
     }
@@ -457,9 +524,20 @@ mod tests {
     fn interrupted_build_terminates_gracefully_and_cleans_auxiliaries_before_retry() {
         let fixture = Fixture::new();
         let config = fixture.config();
-        let tool = fixture.program("trap 'printf term > term-observed; exit 0' TERM\nprintf 'broken aux' > .folio/main.aux\nprintf 'keep' > .folio/user-notes.txt\nwhile :; do /bin/sleep 1; done");
-        let result =
-            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        let tool = fixture.program("trap 'printf term > term-observed; exit 0' TERM\nprintf 'broken aux' > .folio/main.aux\nprintf 'keep' > .folio/user-notes.txt\nprintf ready > ready\nwhile :; do /bin/sleep 1; done");
+        // Interrupt once the script is demonstrably running with its trap
+        // set, rather than after a fixed delay it may not have started within.
+        let cancel = Arc::new(AtomicBool::new(false));
+        let (signal, ready) = (cancel.clone(), fixture.0.join("ready"));
+        let canceller = thread::spawn(move || {
+            let deadline = Instant::now() + Duration::from_secs(50);
+            while !ready.is_file() && Instant::now() < deadline {
+                thread::sleep(Duration::from_millis(10));
+            }
+            signal.store(true, Ordering::Relaxed);
+        });
+        let result = compile_with_program(&config, cancel, &tool).unwrap();
+        canceller.join().unwrap();
         assert!(result.cancelled);
         assert!(
             fixture.0.join("term-observed").is_file(),
@@ -477,6 +555,44 @@ mod tests {
         assert_eq!(fs::read(kept.join("main.pdf")).unwrap(), b"last good PDF");
         assert!(config.output_dir().join("user-notes.txt").is_file());
         assert!(!config.output_dir().join("build-interrupted").exists());
+    }
+    #[test]
+    fn a_missing_program_is_reported_first_and_retried_from_clean() {
+        let fixture = Fixture::new();
+        let config = fixture.config();
+        let tool = fixture.program(
+            "printf 'failed rule' > .folio/main.fdb_latexmk\necho 'sh: biber: command not found'\nexit 12",
+        );
+        let failed =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(!failed.success && !failed.cancelled);
+        assert_eq!(failed.diagnostics[0].path, PathBuf::from("main.tex"));
+        assert!(failed.diagnostics[0].message.contains("`biber`"));
+        // latexmk would not rerun the recorded failed rule once Biber exists.
+        let tool = fixture
+            .program("test ! -e .folio/main.fdb_latexmk || exit 13\nprintf PDF > .folio/main.pdf");
+        let retried =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(retried.success, "{}", retried.log);
+        assert!(retried.diagnostics.is_empty());
+    }
+    #[test]
+    fn a_bibliography_file_that_does_not_exist_is_reported_on_a_successful_build() {
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.0.join("main.tex"),
+            "\\begin{document}\n\\cite{a}\n\\bibliography{refs}\n\\end{document}\n",
+        )
+        .unwrap();
+        let config = fixture.config();
+        let tool = fixture.program(
+            "printf PDF > .folio/main.pdf\necho 'Reason: I am configured only to use bibtex/biber if all .bib files exist,'\necho \"but the following didn't:\"\necho '  refs.bib'\necho 'Latexmk: All targets (.folio/main.pdf) are up-to-date'",
+        );
+        let built = compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(built.success, "{}", built.log);
+        assert_eq!(built.diagnostics.len(), 1);
+        assert_eq!(built.diagnostics[0].line, 3);
+        assert!(built.diagnostics[0].message.contains("`refs.bib`"));
     }
     #[test]
     fn an_ordinary_failed_build_keeps_auxiliaries_for_an_incremental_retry() {
@@ -525,7 +641,21 @@ mod tests {
         canceller.join().unwrap();
         assert!(result.cancelled && !result.success);
         assert!(result.elapsed >= Duration::from_millis(150));
-        assert!(result.elapsed < Duration::from_secs(3));
+        // Far below the minutes an ignored TERM would otherwise cost.
+        assert!(result.elapsed < Duration::from_secs(20));
+    }
+    #[test]
+    fn a_build_past_its_time_limit_is_stopped_and_marked_for_a_clean_retry() {
+        let fixture = Fixture::new();
+        let mut config = fixture.config();
+        config.timeout = Duration::from_millis(300);
+        let tool = fixture.program("while :; do /bin/sleep 1; done");
+        let result =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(result.cancelled && !result.success);
+        assert!(result.log.contains("timed out"), "{}", result.log);
+        assert!(result.elapsed >= Duration::from_millis(300));
+        assert!(config.output_dir().join("build-interrupted").is_file());
     }
     #[test]
     fn snapshot_failure_removes_partial_preview_directory() {
@@ -545,8 +675,7 @@ mod tests {
     #[test]
     fn newly_built_pdf_never_inherits_an_unchanged_old_synctex_map() {
         let fixture = Fixture::new();
-        let mut config = fixture.config();
-        config.timeout = Duration::from_secs(5);
+        let config = fixture.config();
         let tool = fixture.program(
             "printf 'first PDF' > .folio/main.pdf\nprintf old-map > .folio/main.synctex.gz",
         );

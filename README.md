@@ -65,7 +65,9 @@ Cmd/Ctrl+O to open one, or pass a project directory to `scripts/run.sh`.
 
 | Shortcut | Action |
 | --- | --- |
-| Cmd/Ctrl+1 / Cmd/Ctrl+2 | Source / PDF |
+| Cmd/Ctrl+H | Shortcut sheet |
+| Cmd/Ctrl+1 … 9 | Go to that tab (1 is `main`, then the sections) |
+| Option/Alt+1 / Option/Alt+2 | Source / PDF |
 | Cmd/Ctrl+P | Switch file or PDF |
 | Cmd/Ctrl+Shift+P | Search commands |
 | Cmd/Ctrl+B | Toggle project browser |

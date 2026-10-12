@@ -31,10 +31,20 @@ ui_zoom_reset = ["Primary+0"]
 switcher = ["Primary+P"]
 commands = ["Primary+Shift+P"]
 project_files = ["Primary+B"]
-source = ["Primary+1"]
-preview = ["Primary+2"]
+source = ["Alt+1"]
+preview = ["Alt+2"]
 next_surface = ["Ctrl+Tab"]
 previous_surface = ["Ctrl+Shift+Tab"]
+# Jump to a tab by its position in the strip: main, then the sections.
+tab_1 = ["Primary+1"]
+tab_2 = ["Primary+2"]
+tab_3 = ["Primary+3"]
+tab_4 = ["Primary+4"]
+tab_5 = ["Primary+5"]
+tab_6 = ["Primary+6"]
+tab_7 = ["Primary+7"]
+tab_8 = ["Primary+8"]
+tab_9 = ["Primary+9"]
 launcher_next = ["ArrowDown"]
 launcher_previous = ["ArrowUp"]
 launcher_accept = ["Enter"]
@@ -53,7 +63,8 @@ add_project_file = ["Primary+Shift+N"]
 import_figure = []
 cancel_build = []
 reload = []
-help = []
+# The shortcut sheet; the same key or Escape closes it.
+help = ["Primary+H"]
 pdf_zoom_in = []
 pdf_zoom_out = []
 pdf_fit = ["Space"]
@@ -93,5 +104,7 @@ zoom = 1.0
 cache_mib = 96
 
 [window]
+# Start in full screen. With false, the window opens at the size below.
+fullscreen = true
 width = 1440
 height = 940
