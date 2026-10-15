@@ -186,7 +186,11 @@ fn a_build_run_outside_folio_never_blocks_the_project() {
         fs::write(f.0.join(stray), "").unwrap();
         assert_eq!(p.files().unwrap(), before, "{stray} must be ignored");
     }
-    p.build_config().unwrap();
+    // build/ is where Folio publishes the PDF.
+    fs::create_dir_all(f.0.join("build")).unwrap();
+    fs::write(f.0.join("build/main.pdf"), "").unwrap();
+    assert_eq!(p.files().unwrap(), before);
+    assert!(p.build_config().unwrap().publish);
     // A PDF that no source in its folder produces is still misplaced.
     fs::write(f.0.join("draft.pdf"), "").unwrap();
     assert!(p.files().unwrap_err().to_string().contains("draft.pdf"));

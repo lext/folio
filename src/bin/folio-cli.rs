@@ -67,7 +67,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             for name in build::missing_bibliographies(&result.log) {
                 eprintln!("Warning: {}", build::missing_bibliography_hint(name));
             }
-            println!("{}", result.pdf.display());
+            println!(
+                "{}",
+                result.published.as_ref().unwrap_or(&result.pdf).display()
+            );
         }
         Some("project") => match args.get(1).map(String::as_str) {
             Some("new") if (3..=4).contains(&args.len()) => {

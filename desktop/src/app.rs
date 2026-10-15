@@ -748,6 +748,15 @@ impl App {
                                         format!("Typeset in {:.2}s", result.elapsed.as_secs_f32())
                                     }
                                 };
+                                // Name the shareable copy, e.g. build/main.pdf.
+                                if let Some(published) = &result.published {
+                                    let shown = self
+                                        .managed
+                                        .as_ref()
+                                        .and_then(|p| published.strip_prefix(&p.directory).ok())
+                                        .unwrap_or(published);
+                                    self.status.push_str(&format!(" · {}", shown.display()));
+                                }
                                 self.preview.load(result.pdf);
                             } else {
                                 self.status = if result.cancelled {
@@ -2901,6 +2910,7 @@ mod tests {
             success: true,
             cancelled: false,
             pdf: dir.join(".folio/main.pdf"),
+            published: None,
             log: log.into(),
             diagnostics,
             elapsed: Duration::from_millis(1200),

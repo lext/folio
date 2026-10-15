@@ -48,7 +48,10 @@ bibliographies, local packages/classes/styles, and supporting data. `preamble.te
 may live at the root. `supplement.tex` is a standalone document for supplementary
 material: it has its own preamble, `main.tex` does not include it, and projects
 without it remain valid. Required empty folders contain `.gitkeep` so a Git checkout
-retains the layout. Build output stays in `.folio/`.
+retains the layout. Each successful build writes the PDF to `build/main.pdf`,
+replacing it in one step so a PDF viewer never reads a partial file; a failed
+build leaves the last good one. LaTeX's working files stay in `.folio/`. New
+projects list both folders in `.gitignore`.
 
 **Add project file** (Cmd/Ctrl+Shift+N with the default settings) creates a file by relative
 path, such as `sections/methods.tex` or `tables/results.tex`. Include it from
@@ -81,7 +84,7 @@ Hidden files and folders (`.github/`, `.gitattributes`) and editor backup files
 (`main.tex~`, `.swp`, `.bak`) are ignored, not rejected. So is the output of a
 build run outside Folio, such as `latexmk main.tex` in a terminal: auxiliary
 files (`main.aux`, `main.log`, `main.synctex.gz`, …) and a PDF named after a
-`.tex` file beside it. Folio keeps building into `.folio/` while the project is open.
+`.tex` file beside it. Folio keeps its own build in `.folio/` and `build/`.
 
 Opening a different project asks how to handle unsaved files. Standalone sources
 and folders without a manifest are refused. To bring existing LaTeX into Folio,
@@ -171,7 +174,7 @@ CLI equivalents (after `cargo build --bin folio-cli`):
 ```sh
 ./target/debug/folio-cli project new ../paper xe
 ./target/debug/folio-cli project check ../paper
-./target/debug/folio-cli build ../paper
+./target/debug/folio-cli build ../paper   # prints ../paper/build/main.pdf
 ./target/debug/folio-cli project export ../paper ../submission --bibliography inline
 ./target/debug/folio-cli project export ../paper ../submission-bib --bibliography bibtex
 ```

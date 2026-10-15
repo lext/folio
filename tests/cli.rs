@@ -122,7 +122,7 @@ fn successful_build_accepts_non_utf8_output() {
 
 #[test]
 #[cfg(unix)]
-fn successful_pdf_accepts_optional_compressed_or_plain_synctex() {
+fn successful_pdf_is_published_to_build_and_its_map_stays_with_the_preview() {
     for (label, script, extension) in [
         ("no-map", "true", None),
         (
@@ -138,10 +138,24 @@ fn successful_pdf_accepts_optional_compressed_or_plain_synctex() {
             String::from_utf8_lossy(&result.stderr)
         );
         let path = std::path::PathBuf::from(String::from_utf8(result.stdout).unwrap().trim());
-        assert!(path.is_file());
-        if let Some(extension) = extension {
-            assert!(path.with_extension(extension).is_file());
-        }
+        assert_eq!(
+            path,
+            dir.join("paper/build/main.pdf").canonicalize().unwrap()
+        );
+        assert_eq!(std::fs::read(&path).unwrap(), b"PDF fixture");
+        // Navigation reads the immutable preview copy; build/ holds only the PDF.
+        let previews: Vec<_> = std::fs::read_dir(dir.join("paper/.folio"))
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().starts_with("preview-"))
+            .map(|e| e.path().join("main.pdf"))
+            .collect();
+        assert_eq!(previews.len(), 1);
+        assert_eq!(
+            extension.is_some_and(|e| previews[0].with_extension(e).is_file()),
+            extension.is_some()
+        );
+        assert!(!path.with_extension("synctex").exists());
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

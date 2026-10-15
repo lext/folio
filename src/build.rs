@@ -31,6 +31,9 @@ pub struct BuildConfig {
     pub timeout: Duration,
     pub use_latexmkrc: bool,
     pub run_bibliography: bool,
+    /// Copy each successful PDF to `build/` beside the main file, where the
+    /// author can open, share or attach it. Off for export's scratch builds.
+    pub publish: bool,
 }
 impl BuildConfig {
     pub fn new(root: PathBuf, engine: Engine) -> Self {
@@ -40,6 +43,7 @@ impl BuildConfig {
             timeout: Duration::from_secs(120),
             use_latexmkrc: true,
             run_bibliography: true,
+            publish: false,
         }
     }
     pub fn output_dir(&self) -> PathBuf {
@@ -49,6 +53,14 @@ impl BuildConfig {
         self.output_dir()
             .join(self.root.file_name().unwrap_or_default())
             .with_extension("pdf")
+    }
+    /// The finished PDF the author sees, e.g. `build/main.pdf`.
+    pub fn published_pdf(&self) -> PathBuf {
+        self.root
+            .parent()
+            .unwrap_or(Path::new("."))
+            .join("build")
+            .join(self.pdf_path().file_name().unwrap_or_default())
     }
     pub fn arguments(&self) -> Vec<String> {
         let mut args = vec![
@@ -170,6 +182,8 @@ pub struct BuildResult {
     pub success: bool,
     pub cancelled: bool,
     pub pdf: PathBuf,
+    /// Where a successful build was published, when publishing is on.
+    pub published: Option<PathBuf>,
     pub log: String,
     pub diagnostics: Vec<Diagnostic>,
     pub elapsed: Duration,
@@ -316,10 +330,20 @@ fn compile_with_program(
     } else {
         config.pdf_path()
     };
+    let published = if success && config.publish {
+        // Replaced in one step: a viewer watching the file never reads half a PDF.
+        let target = config.published_pdf();
+        fs::create_dir_all(target.parent().unwrap())?;
+        crate::document::atomic_write(&target, &fs::read(&pdf)?)?;
+        Some(target)
+    } else {
+        None
+    };
     Ok(BuildResult {
         success,
         cancelled,
         pdf,
+        published,
         log,
         diagnostics,
         elapsed: start.elapsed(),
@@ -661,6 +685,29 @@ mod tests {
         assert!(result.log.contains("timed out"), "{}", result.log);
         assert!(result.elapsed >= Duration::from_millis(300));
         assert!(config.output_dir().join("build-interrupted").is_file());
+    }
+    #[test]
+    fn only_publishing_builds_write_build_pdf_and_a_failure_keeps_the_last_one() {
+        let fixture = Fixture::new();
+        let mut config = fixture.config();
+        let tool = fixture.program("printf first > .folio/main.pdf");
+        let scratch =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(scratch.success && scratch.published.is_none());
+        assert!(!fixture.0.join("build").exists());
+
+        config.publish = true;
+        let tool = fixture.program("printf second > .folio/main.pdf");
+        let built = compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        let published = fixture.0.canonicalize().unwrap().join("build/main.pdf");
+        assert_eq!(built.published.as_ref(), Some(&published));
+        assert_eq!(fs::read(&published).unwrap(), b"second");
+
+        let tool = fixture.program("printf broken > .folio/main.pdf\nexit 12");
+        let failed =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(!failed.success && failed.published.is_none());
+        assert_eq!(fs::read(&published).unwrap(), b"second");
     }
     #[test]
     fn snapshot_failure_removes_partial_preview_directory() {
