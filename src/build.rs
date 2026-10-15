@@ -362,46 +362,51 @@ fn clean_interrupted_output(dir: &Path) -> io::Result<()> {
         if kind.is_dir() && !name.starts_with("preview-") {
             clean_interrupted_output(&path)?;
         } else if kind.is_file()
-            && (name.ends_with(".synctex.gz")
-                || name.ends_with(".run.xml")
-                || path.extension().is_some_and(|e| {
-                    [
-                        "aux",
-                        "toc",
-                        "bbl",
-                        "bcf",
-                        "blg",
-                        "out",
-                        "log",
-                        "fls",
-                        "fdb_latexmk",
-                        "lof",
-                        "lot",
-                        "nav",
-                        "snm",
-                        "vrb",
-                        "idx",
-                        "ind",
-                        "ilg",
-                        "glo",
-                        "gls",
-                        "glg",
-                        "acn",
-                        "acr",
-                        "alg",
-                        "synctex",
-                        "pdf",
-                        "dvi",
-                        "xdv",
-                    ]
-                    .iter()
-                    .any(|x| e == *x)
-                }))
+            && (is_auxiliary(&name) || path.extension().is_some_and(|e| e == "pdf"))
         {
             fs::remove_file(path)?;
         }
     }
     Ok(())
+}
+/// Files a TeX run writes beside its main file, apart from the PDF itself.
+pub(crate) fn is_auxiliary(name: &str) -> bool {
+    // pdfTeX writes `main.synctex(busy)` while a run is in progress.
+    let name = name.strip_suffix("(busy)").unwrap_or(name);
+    name.ends_with(".synctex.gz")
+        || name.ends_with(".run.xml")
+        || Path::new(name).extension().is_some_and(|e| {
+            [
+                "aux",
+                "toc",
+                "bbl",
+                "bcf",
+                "blg",
+                "out",
+                "log",
+                "fls",
+                "fdb_latexmk",
+                "lof",
+                "lot",
+                "nav",
+                "snm",
+                "vrb",
+                "idx",
+                "ind",
+                "ilg",
+                "glo",
+                "gls",
+                "glg",
+                "acn",
+                "acr",
+                "alg",
+                "synctex",
+                "dvi",
+                "xdv",
+            ]
+            .iter()
+            .any(|x| e == *x)
+        })
 }
 /// Immutable PDF/map pairs keep navigation correct while the next build runs.
 /// A PDF without a map is still a useful preview.

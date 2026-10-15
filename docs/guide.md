@@ -78,7 +78,10 @@ build commands are not part of schema 1. **Validate project** checks the structu
 and settings. Managed builds/export reject misplaced files, symlinks, missing
 required folders, unknown fields and invalid settings with an actionable error.
 Hidden files and folders (`.github/`, `.gitattributes`) and editor backup files
-(`main.tex~`, `.swp`, `.bak`) are ignored, not rejected.
+(`main.tex~`, `.swp`, `.bak`) are ignored, not rejected. So is the output of a
+build run outside Folio, such as `latexmk main.tex` in a terminal: auxiliary
+files (`main.aux`, `main.log`, `main.synctex.gz`, …) and a PDF named after a
+`.tex` file beside it. Folio keeps building into `.folio/` while the project is open.
 
 Opening a different project asks how to handle unsaved files. Standalone sources
 and folders without a manifest are refused. To bring existing LaTeX into Folio,

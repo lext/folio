@@ -209,7 +209,8 @@ impl Project {
             let kind = entry.file_type()?;
             // Tooling, editors and the OS leave files a paper never uses. They
             // are not project files: skip them instead of blocking the build.
-            if ignored(&entry.file_name().to_string_lossy(), kind.is_dir())
+            if (ignored(&entry.file_name().to_string_lossy(), kind.is_dir())
+                || (kind.is_file() && build_output(&path)))
                 && !allowed_file(relative)
                 && !(depth == 0 && relative == Path::new(".folio"))
             {
@@ -313,6 +314,14 @@ fn ignored(name: &str, directory: bool) -> bool {
                     .iter()
                     .any(|suffix| name.ends_with(suffix))
                 || ["Thumbs.db", "desktop.ini", "Icon\r"].contains(&name)))
+}
+/// What a build run outside Folio (`latexmk main.tex`, another editor) leaves
+/// beside the sources: auxiliary files, and a PDF named after a `.tex` file.
+/// Folio builds into `.folio/`, so these never feed its own builds.
+fn build_output(path: &Path) -> bool {
+    let name = path.file_name().unwrap_or_default().to_string_lossy();
+    crate::build::is_auxiliary(&name)
+        || (path.extension().is_some_and(|e| e == "pdf") && path.with_extension("tex").is_file())
 }
 fn allowed_file(path: &Path) -> bool {
     let extension = path

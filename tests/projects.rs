@@ -164,6 +164,35 @@ fn hidden_tooling_and_editor_backup_files_never_block_a_project() {
 }
 
 #[test]
+fn a_build_run_outside_folio_never_blocks_the_project() {
+    let f = Fixture::new();
+    let p = Project::create(&f.0, "Paper", Engine::PdfLatex).unwrap();
+    let before = p.files().unwrap();
+    // `latexmk main.tex` in a terminal, mid-run and finished, and an
+    // `\include`d section's record beside it.
+    for stray in [
+        "main.aux",
+        "main.log",
+        "main.fls",
+        "main.fdb_latexmk",
+        "main.synctex.gz",
+        "main.synctex(busy)",
+        "main.run.xml",
+        "main.bbl",
+        "main.pdf",
+        "supplement.pdf",
+        "sections/introduction.aux",
+    ] {
+        fs::write(f.0.join(stray), "").unwrap();
+        assert_eq!(p.files().unwrap(), before, "{stray} must be ignored");
+    }
+    p.build_config().unwrap();
+    // A PDF that no source in its folder produces is still misplaced.
+    fs::write(f.0.join("draft.pdf"), "").unwrap();
+    assert!(p.files().unwrap_err().to_string().contains("draft.pdf"));
+}
+
+#[test]
 fn misplaced_files_and_missing_folders_are_actionable_validation_errors() {
     let f = Fixture::new();
     let p = Project::create(&f.0, "Paper", Engine::PdfLatex).unwrap();
