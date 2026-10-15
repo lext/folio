@@ -38,10 +38,10 @@ impl Document {
         self.saved.clone_from(&self.text);
         Ok(())
     }
-    /// Adopt `disk` when this buffer has no unsaved edits and the file changed
-    /// underneath it. Returns whether the text was replaced.
+    /// Adopt `disk` when the file changed underneath this buffer. The newest
+    /// file wins, even over unsaved edits. Returns whether the text was replaced.
     pub fn adopt_disk(&mut self, disk: &str) -> bool {
-        if self.is_dirty() || self.saved == disk {
+        if self.saved == disk {
             return false;
         }
         self.saved = disk.to_owned();

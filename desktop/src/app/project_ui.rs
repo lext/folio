@@ -769,16 +769,14 @@ mod tests {
         );
         assert!(app.add_project_file("tables/results.tex").is_err());
         app.tabs[app.active].doc.text = "unsaved table".into();
-        fs::write(a.directory.join("tables/results.tex"), "external edit").unwrap();
+        // A newer file would simply win; a deleted one still refuses the save.
+        fs::remove_file(a.directory.join("tables/results.tex")).unwrap();
         app.open(b.directory.clone());
         app.finish_project_switch(true);
         assert_eq!(app.root, Some(a.directory.join("main.tex")));
         assert!(app.pending_project.is_some());
         assert_eq!(app.tabs[app.active].doc.text, "unsaved table");
-        assert_eq!(
-            fs::read_to_string(a.directory.join("tables/results.tex")).unwrap(),
-            "external edit"
-        );
+        assert!(!a.directory.join("tables/results.tex").exists());
         app.finish_project_switch(false);
         assert_eq!(app.root, Some(b.directory.join("main.tex")));
         super::super::tests::settle(&mut app, &ctx, |a| !a.scanning);

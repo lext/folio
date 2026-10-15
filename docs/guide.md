@@ -273,9 +273,11 @@ changes. Line numbers and Git marks appear in the source gutter. Line numbers ar
 by default; `[editor] line_numbers = false` hides them if desired.
 Long source lines wrap at the window width; a wrapped line keeps one line number.
 
-A buffer without unsaved edits follows changes made to its file outside Folio,
-such as `git pull` or another editor. A buffer with unsaved edits is never
-replaced: saving reports the conflict, and **Reload** discards your edits.
+Open buffers follow changes made to their files outside Folio, such as
+`git pull`, another editor or a coding agent, within a couple of seconds; the
+preview rebuilds from them. The newest file on disk always wins, without a
+prompt. If it replaces unsaved edits, they are kept in `.folio/recovery/` with
+an `.orphaned` suffix and Folio names the path. **Reload** discards your edits.
 About a second after you stop typing, Folio keeps a copy of each unsaved buffer
 in `.folio/recovery/`. If Folio or the computer stops before you save, opening
 the file restores those edits as unsaved changes. A copy is removed when its

@@ -380,6 +380,38 @@ impl App {
             Err(e) => self.status = e.to_string(),
         }
     }
+    /// The newest file on disk always wins, even over unsaved edits; those
+    /// are set aside in `.folio/recovery/` rather than lost.
+    fn adopt_disk(&mut self, index: usize, disk: &str) -> bool {
+        let tab = &self.tabs[index];
+        let replaced = (tab.doc.is_dirty() && tab.doc.saved() != disk).then(|| {
+            (
+                tab.doc.path.clone(),
+                tab.doc.saved().to_owned(),
+                tab.doc.text.clone(),
+            )
+        });
+        if !self.tabs[index].adopt_disk(disk) {
+            return false;
+        }
+        if let Some((path, saved, text)) = replaced {
+            let name = path.file_name().unwrap_or_default().to_string_lossy();
+            self.status = match self.recovery_file(&path) {
+                Some(file) => {
+                    let mut copy = file.file_name().unwrap_or_default().to_owned();
+                    copy.push(".orphaned");
+                    let aside = file.with_file_name(copy);
+                    self.recovery.write(aside.clone(), &saved, &text);
+                    format!(
+                        "{name} changed on disk and was reloaded. Your unsaved edits are in {}",
+                        aside.display()
+                    )
+                }
+                None => format!("{name} changed on disk and was reloaded over unsaved edits."),
+            };
+        }
+        true
+    }
     fn recovery_file(&self, source: &std::path::Path) -> Option<PathBuf> {
         crate::recovery::file(&self.managed.as_ref()?.directory, source)
     }
@@ -449,11 +481,10 @@ impl App {
             .collect();
         self.disk_sources = snapshot.sources;
         self.disk_indexes = snapshot.indexes;
-        // Follow external edits (git pull, another editor) in buffers without
-        // unsaved changes. Edited buffers keep their text and conflict on save.
-        for tab in &mut self.tabs {
-            if let Some(disk) = self.disk_sources.get(&tab.doc.path) {
-                tab.adopt_disk(disk);
+        // Follow external edits (git pull, another editor, an agent).
+        for index in 0..self.tabs.len() {
+            if let Some(disk) = self.disk_sources.get(&self.tabs[index].doc.path).cloned() {
+                self.adopt_disk(index, &disk);
             }
         }
         if let Some(directory) = self.root.as_ref().and_then(|r| r.parent()) {
@@ -507,12 +538,16 @@ impl App {
         });
     }
     fn save_all(&mut self) -> bool {
-        // An unedited buffer cannot conflict: take the newer file instead of
-        // refusing to save, without waiting for the next background scan.
-        let mut reloaded = false;
-        for tab in self.tabs.iter_mut().filter(|tab| !tab.doc.is_dirty()) {
-            if let Ok(disk) = fs::read_to_string(&tab.doc.path) {
-                reloaded |= tab.adopt_disk(&disk);
+        // Take any newer file instead of refusing to save, without waiting for
+        // the next background scan.
+        let (mut reloaded, mut replaced_edits) = (false, false);
+        for index in 0..self.tabs.len() {
+            let edited = self.tabs[index].doc.is_dirty();
+            if let Ok(disk) = fs::read_to_string(&self.tabs[index].doc.path)
+                && self.adopt_disk(index, &disk)
+            {
+                reloaded = true;
+                replaced_edits |= edited;
             }
         }
         if reloaded {
@@ -549,7 +584,10 @@ impl App {
             self.status = format!("Save failed:\n{}", errors.join("\n"));
             return false;
         }
-        self.status = "Saved".into();
+        if !replaced_edits {
+            // Keep the notice naming where the replaced edits were set aside.
+            self.status = "Saved".into();
+        }
         true
     }
     fn enter_preview(&mut self, ctx: &egui::Context, go: bool) {
@@ -1297,6 +1335,31 @@ impl App {
             }
         }
     }
+    /// Scan for changes made outside Folio every couple of seconds, and
+    /// rebuild from them while the PDF is showing.
+    fn follow_disk(&mut self, ctx: &egui::Context) {
+        if self.last_scan.elapsed() > Duration::from_secs(2) {
+            // A scan made from older text is discarded, so scanning during a
+            // burst of typing is wasted work. Wait for a short pause instead.
+            let quiet = Duration::from_millis(500);
+            if self.last_edit.1.elapsed() >= quiet {
+                self.request_project_scan(ctx);
+            } else {
+                ctx.request_repaint_after(quiet);
+            }
+        }
+        // Publish external edits when their background scan arrives. Preview
+        // buffers were saved on entry, so this path need not scan/save again.
+        if self.layers.layer == Layer::Preview
+            && !self.building
+            && !self.exporting
+            && !self.scanning
+            && self.layers.can_auto_build()
+            && self.layers.enter_preview()
+        {
+            self.start_build(ctx);
+        }
+    }
     fn source_has_focus(&self, ctx: &egui::Context) -> bool {
         !self.reload_dialog
             && !self.close_dialog
@@ -1341,27 +1404,7 @@ impl eframe::App for App {
             self.sync_recovery(false);
             ctx.request_repaint_after(pause);
         }
-        if self.last_scan.elapsed() > Duration::from_secs(2) {
-            // A scan made from older text is discarded, so scanning during a
-            // burst of typing is wasted work. Wait for a short pause instead.
-            let quiet = Duration::from_millis(500);
-            if self.last_edit.1.elapsed() >= quiet {
-                self.request_project_scan(ctx);
-            } else {
-                ctx.request_repaint_after(quiet);
-            }
-        }
-        // Publish external edits when their background scan arrives. Preview
-        // buffers were saved on entry, so this path need not scan/save again.
-        if self.layers.layer == Layer::Preview
-            && !self.building
-            && !self.exporting
-            && !self.scanning
-            && self.layers.can_auto_build()
-            && self.layers.enter_preview()
-        {
-            self.start_build(ctx);
-        }
+        self.follow_disk(ctx);
         ctx.request_repaint_after(Duration::from_secs(2));
         if self.show_log {
             egui::TopBottomPanel::bottom("build-log")
@@ -2706,7 +2749,7 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
-    fn unedited_buffers_follow_external_changes_instead_of_blocking_saves() {
+    fn buffers_follow_external_changes_and_set_replaced_edits_aside() {
         let dir =
             std::env::temp_dir().join(format!("folio external reload {}", std::process::id()));
         ManagedProject::create(&dir, "Test paper", Engine::PdfLatex).unwrap();
@@ -2746,16 +2789,78 @@ mod tests {
         assert_eq!(app.tabs[index].doc.text, "pulled\nagain");
         assert_eq!(app.tabs[index].line_count, 2);
 
-        // An edited buffer is never replaced; it conflicts as before.
+        // The newest file wins over unsaved edits too, which are set aside.
         let index = tab(&app, "edited.tex");
         app.tabs[index].doc.text = "second edit".into();
         fs::write(&edited, "theirs").unwrap();
         app.refresh_project();
         settle(&mut app, &ctx, |a| !a.scanning);
-        assert_eq!(app.tabs[index].doc.text, "second edit");
-        assert!(!app.save_all());
+        assert_eq!(app.tabs[index].doc.text, "theirs");
+        assert!(!app.tabs[index].doc.is_dirty());
+        assert!(app.status.contains(".orphaned"), "{}", app.status);
+        app.recovery.flush();
+        let aside = dir.join(".folio/recovery/sections/edited.tex.recover.orphaned");
+        assert!(
+            fs::read_to_string(aside)
+                .unwrap()
+                .ends_with("\nsecond edit")
+        );
+        assert!(app.save_all(), "{}", app.status);
         assert_eq!(fs::read_to_string(&edited).unwrap(), "theirs");
+
+        // The same applies when the change is found on save, not by a scan.
+        app.tabs[index].doc.text = "third edit".into();
+        fs::write(&edited, "theirs again").unwrap();
+        assert!(app.save_all(), "{}", app.status);
+        assert_eq!(app.tabs[index].doc.text, "theirs again");
+        assert!(app.status.contains(".orphaned"), "{}", app.status);
         settle(&mut app, &ctx, |a| !a.scanning);
+        drop(app);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn external_changes_rebuild_only_while_the_pdf_is_showing() {
+        let dir = std::env::temp_dir().join(format!("folio external build {}", std::process::id()));
+        ManagedProject::create(&dir, "Test paper", Engine::PdfLatex).unwrap();
+        let section = dir.join("sections/introduction.tex");
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        app.refresh_project();
+        settle(&mut app, &ctx, |a| !a.scanning && a.project_stamp.is_some());
+        // Frames as the window would run them, without waiting out the
+        // two-second scan interval.
+        let follow = |app: &mut App, ready: &dyn Fn(&App) -> bool| {
+            let deadline = Instant::now() + Duration::from_secs(25);
+            while !ready(app) {
+                assert!(Instant::now() < deadline, "{}", app.status);
+                if !app.scanning {
+                    app.last_scan = Instant::now() - Duration::from_secs(3);
+                }
+                app.follow_disk(&ctx);
+                app.poll(&ctx);
+                // The next frame, between scans, is where a build may start.
+                app.follow_disk(&ctx);
+                thread::sleep(Duration::from_millis(20));
+            }
+        };
+
+        // Source showing: the preview goes stale and waits to be entered.
+        app.layers.built = Some(app.layers.revision);
+        fs::write(&section, "Changed by another program.\n").unwrap();
+        follow(&mut app, &|a| a.layers.stale());
+        for _ in 0..3 {
+            app.follow_disk(&ctx);
+            app.poll(&ctx);
+        }
+        assert!(!app.building);
+
+        // PDF showing: the change is typeset without any action.
+        app.layers.layer = Layer::Preview;
+        app.layers.built = Some(app.layers.revision);
+        fs::write(&section, "Changed again.\n").unwrap();
+        follow(&mut app, &|a| a.building);
+        app.cancel.store(true, Ordering::Relaxed);
+        settle(&mut app, &ctx, |a| !a.building && !a.scanning);
         drop(app);
         fs::remove_dir_all(dir).unwrap();
     }
@@ -2771,8 +2876,9 @@ mod tests {
             app.open_document(path);
             app.tabs[app.active].doc.text = "unsaved".into();
         }
-        fs::write(dir.join("sections/b.tex"), "external").unwrap();
-        fs::write(dir.join("sections/c.tex"), "external").unwrap();
+        // A newer file is adopted, but a deleted one is not silently recreated.
+        fs::remove_file(dir.join("sections/b.tex")).unwrap();
+        fs::remove_file(dir.join("sections/c.tex")).unwrap();
         assert!(!app.save_all());
         assert_eq!(
             fs::read_to_string(dir.join("sections/a.tex")).unwrap(),
