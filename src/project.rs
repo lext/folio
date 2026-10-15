@@ -124,7 +124,7 @@ impl Project {
             fs::write(directory.join(".gitignore"), ".folio/\nbuild/\n.DS_Store\n")?;
             fs::write(
                 directory.join("README.md"),
-                "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nsupplement.tex is a separate document for supplementary material.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\nBuilds write the PDF to build/main.pdf; .folio/ holds working files. Do not edit either.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
+                "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nsupplement.tex is a separate document for supplementary material.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\nBuilds write the PDFs to build/main.pdf and build/supplement.pdf; .folio/ holds working files. Do not edit either.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
             )?;
             Self::load(directory)
         })();
@@ -272,13 +272,29 @@ impl Project {
         Ok(())
     }
     pub fn build_config(&self) -> io::Result<BuildConfig> {
+        Ok(self.build_configs()?.remove(0))
+    }
+    /// main.tex, then supplement.tex when the project has one. A project
+    /// build typesets both and publishes `build/main.pdf` and
+    /// `build/supplement.pdf`.
+    pub fn build_configs(&self) -> io::Result<Vec<BuildConfig>> {
         let current = Self::load(&self.directory)?;
-        current.files()?;
-        let mut config = BuildConfig::new(self.directory.join("main.tex"), current.manifest.engine);
-        config.timeout = current.manifest.timeout;
-        config.use_latexmkrc = false;
-        config.publish = true;
-        Ok(config)
+        let files = current.files()?;
+        let mut roots = vec!["main.tex"];
+        if files.iter().any(|file| file == Path::new("supplement.tex")) {
+            roots.push("supplement.tex");
+        }
+        Ok(roots
+            .into_iter()
+            .map(|root| {
+                let mut config =
+                    BuildConfig::new(self.directory.join(root), current.manifest.engine);
+                config.timeout = current.manifest.timeout;
+                config.use_latexmkrc = false;
+                config.publish = true;
+                config
+            })
+            .collect())
     }
     /// Create a source or asset in its prescribed role, without replacing a file.
     pub fn write_new(&self, relative: &Path, bytes: &[u8]) -> io::Result<PathBuf> {

@@ -92,7 +92,10 @@ fn fake_build(script: &str, label: &str) -> (std::path::PathBuf, std::process::O
     let tool = dir.join("bin/latexmk");
     fs::write(
         &tool,
-        format!("#!/bin/sh\nprintf 'PDF fixture' > .folio/main.pdf\n{script}\n"),
+        // Named after the document latexmk was given, its last argument.
+        format!(
+            "#!/bin/sh\nfor a; do last=$a; done\nprintf 'PDF fixture' > .folio/${{last%.tex}}.pdf\n{script}\n"
+        ),
     )
     .unwrap();
     fs::set_permissions(&tool, fs::Permissions::from_mode(0o755)).unwrap();
@@ -137,18 +140,24 @@ fn successful_pdf_is_published_to_build_and_its_map_stays_with_the_preview() {
             "{}",
             String::from_utf8_lossy(&result.stderr)
         );
-        let path = std::path::PathBuf::from(String::from_utf8(result.stdout).unwrap().trim());
+        // The paper, then the supplement every new project has.
+        let stdout = String::from_utf8(result.stdout).unwrap();
+        let published: Vec<_> = stdout.lines().map(std::path::PathBuf::from).collect();
+        let build = dir.join("paper/build").canonicalize().unwrap();
         assert_eq!(
-            path,
-            dir.join("paper/build/main.pdf").canonicalize().unwrap()
+            published,
+            [build.join("main.pdf"), build.join("supplement.pdf")]
         );
-        assert_eq!(std::fs::read(&path).unwrap(), b"PDF fixture");
+        assert_eq!(std::fs::read(&published[1]).unwrap(), b"PDF fixture");
+        let path = &published[0];
+        assert_eq!(std::fs::read(path).unwrap(), b"PDF fixture");
         // Navigation reads the immutable preview copy; build/ holds only the PDF.
         let previews: Vec<_> = std::fs::read_dir(dir.join("paper/.folio"))
             .unwrap()
             .flatten()
             .filter(|e| e.file_name().to_string_lossy().starts_with("preview-"))
             .map(|e| e.path().join("main.pdf"))
+            .filter(|p| p.is_file())
             .collect();
         assert_eq!(previews.len(), 1);
         assert_eq!(

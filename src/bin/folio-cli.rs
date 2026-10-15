@@ -54,23 +54,38 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     io::Error::other("Set the project engine in folio.project.toml.").into(),
                 );
             }
-            let config = required_project(Path::new(&args[1]))?.build_config()?;
-            let result = build::compile(&config, Arc::new(AtomicBool::new(false)))?;
-            if !result.success {
-                eprintln!("{}", result.log);
-                return Err(io::Error::other(match build::missing_tool(&result.log) {
-                    Some(tool) => format!("LaTeX build failed: {}", build::missing_tool_hint(tool)),
-                    None => "LaTeX build failed".into(),
-                })
-                .into());
+            let configs = required_project(Path::new(&args[1]))?.build_configs()?;
+            let mut failure = None;
+            for config in &configs {
+                let name = config
+                    .root
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy();
+                let result = build::compile(config, Arc::new(AtomicBool::new(false)))?;
+                if !result.success {
+                    eprintln!("{}", result.log);
+                    // Still typeset the other document; report the first failure.
+                    failure.get_or_insert(match build::missing_tool(&result.log) {
+                        Some(tool) => format!(
+                            "LaTeX build of {name} failed: {}",
+                            build::missing_tool_hint(tool)
+                        ),
+                        None => format!("LaTeX build of {name} failed"),
+                    });
+                    continue;
+                }
+                for missing in build::missing_bibliographies(&result.log) {
+                    eprintln!("Warning: {}", build::missing_bibliography_hint(missing));
+                }
+                println!(
+                    "{}",
+                    result.published.as_ref().unwrap_or(&result.pdf).display()
+                );
             }
-            for name in build::missing_bibliographies(&result.log) {
-                eprintln!("Warning: {}", build::missing_bibliography_hint(name));
+            if let Some(failure) = failure {
+                return Err(io::Error::other(failure).into());
             }
-            println!(
-                "{}",
-                result.published.as_ref().unwrap_or(&result.pdf).display()
-            );
         }
         Some("project") => match args.get(1).map(String::as_str) {
             Some("new") if (3..=4).contains(&args.len()) => {

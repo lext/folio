@@ -48,10 +48,13 @@ bibliographies, local packages/classes/styles, and supporting data. `preamble.te
 may live at the root. `supplement.tex` is a standalone document for supplementary
 material: it has its own preamble, `main.tex` does not include it, and projects
 without it remain valid. Required empty folders contain `.gitkeep` so a Git checkout
-retains the layout. Each successful build writes the PDF to `build/main.pdf`,
-replacing it in one step so a PDF viewer never reads a partial file; a failed
-build leaves the last good one. LaTeX's working files stay in `.folio/`. New
-projects list both folders in `.gitignore`.
+retains the layout. Each build typesets `main.tex` and then, when it exists,
+`supplement.tex`, and writes their PDFs to `build/main.pdf` and
+`build/supplement.pdf`. Each is replaced in one step so a PDF viewer never reads
+a partial file, and a failed build leaves the last good one. The preview shows
+the paper as soon as it is done; a supplement that fails is reported with its
+log without hiding it. LaTeX's working files stay in `.folio/`. New projects
+list both folders in `.gitignore`.
 
 **Add project file** (Cmd/Ctrl+Shift+N with the default settings) creates a file by relative
 path, such as `sections/methods.tex` or `tables/results.tex`. Include it from
@@ -151,8 +154,7 @@ figures/resources **beside it**, and resolve duplicate asset names deterministic
 The folder includes a verified `main.pdf` and `BUILD.txt` with the exact build command.
 For embedded bibliographies, that command includes `-bibtex-`. When the project has
 a `supplement.tex`, it is flattened and verified the same way and exported beside the
-paper as `supplement.tex` and `supplement.pdf`. The editor preview and
-`folio-cli build` still typeset `main.tex` only.
+paper as `supplement.tex` and `supplement.pdf`.
 
 Export runs in the background from a saved snapshot. It builds the snapshot,
 flattens it, builds the export, and only then creates the destination. **Cancel
@@ -174,7 +176,7 @@ CLI equivalents (after `cargo build --bin folio-cli`):
 ```sh
 ./target/debug/folio-cli project new ../paper xe
 ./target/debug/folio-cli project check ../paper
-./target/debug/folio-cli build ../paper   # prints ../paper/build/main.pdf
+./target/debug/folio-cli build ../paper   # prints build/main.pdf and build/supplement.pdf
 ./target/debug/folio-cli project export ../paper ../submission --bibliography inline
 ./target/debug/folio-cli project export ../paper ../submission-bib --bibliography bibtex
 ```

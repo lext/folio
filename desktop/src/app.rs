@@ -108,7 +108,11 @@ enum Event {
     AssetOpened(Result<(), String>),
     Scanned(u64, u64, crate::project::Snapshot),
     ScanUnchanged(u64),
+    /// The paper's build: the preview can show it at once.
     Build(Result<BuildResult, String>),
+    /// The supplement's, if the project has one, and whether the paper
+    /// built. Ends the build either way.
+    Supplement(Option<Result<BuildResult, String>>, bool),
     Source(u64, Result<SourceLocation, String>, Option<WordAnchor>),
     Destination(u64, Result<Vec<PdfLocation>, String>),
 }
@@ -142,6 +146,8 @@ pub struct App {
     disk_indexes: HashMap<PathBuf, Arc<completion::Index>>,
     ctx: egui::Context,
     preview_pending: bool,
+    /// What the paper's build reported; the supplement's outcome joins it.
+    paper_status: String,
     recovery: crate::recovery::Recovery,
     project_stamp: Option<u64>,
     /// Key of the applied snapshot; an identical periodic scan is skipped.
@@ -235,6 +241,7 @@ impl App {
             disk_indexes: HashMap::new(),
             ctx: ctx.clone(),
             preview_pending: false,
+            paper_status: String::new(),
             recovery: Default::default(),
             project_stamp: None,
             scan_key: None,
@@ -611,7 +618,7 @@ impl App {
         if self.layers.layer == Layer::Source {
             self.preview.activate();
         }
-        if self.scanning && self.layers.stale() {
+        if (self.scanning || self.building) && self.layers.stale() {
             self.layers.layer = Layer::Preview;
             self.preview_pending = true;
         } else if self.layers.enter_preview() {
@@ -636,11 +643,21 @@ impl App {
         let tx = self.tx.clone();
         let ctx = ctx.clone();
         self.build_thread = Some(thread::spawn(move || {
-            let result = project
-                .build_config()
-                .and_then(|config| build::compile(&config, cancel))
-                .map_err(|e| e.to_string());
-            let _ = tx.send(Event::Build(result));
+            // One after the other: both documents share .folio/.
+            let configs = project.build_configs().map_err(|e| e.to_string());
+            let main = configs.as_ref().map_err(Clone::clone).and_then(|configs| {
+                build::compile(&configs[0], cancel.clone()).map_err(|e| e.to_string())
+            });
+            let go_on = main.as_ref().is_ok_and(|result| !result.cancelled);
+            let paper = main.as_ref().is_ok_and(|result| result.success);
+            let _ = tx.send(Event::Build(main));
+            ctx.request_repaint();
+            let supplement = configs
+                .ok()
+                .and_then(|configs| configs.into_iter().nth(1))
+                .filter(|_| go_on)
+                .map(|config| build::compile(&config, cancel).map_err(|e| e.to_string()));
+            let _ = tx.send(Event::Supplement(supplement, paper));
             ctx.request_repaint();
         }));
     }
@@ -725,7 +742,7 @@ impl App {
                     self.scanning = false;
                 }
                 Event::Build(result) => {
-                    self.building = false;
+                    // Still building until the supplement's event arrives.
                     match result {
                         Ok(result) => {
                             self.log = result.log;
@@ -777,6 +794,48 @@ impl App {
                             self.show_log = true;
                         }
                     }
+                    self.paper_status.clone_from(&self.status);
+                }
+                Event::Supplement(result, paper) => {
+                    self.building = false;
+                    // Joined to the paper's message, not to a later one such as "Saved".
+                    let paper_status = std::mem::take(&mut self.paper_status);
+                    let mut suffix = String::new();
+                    let failure = match result {
+                        None => None,
+                        Some(Ok(result)) if result.success => {
+                            if let Some(published) = &result.published {
+                                let name = published.file_name().unwrap_or_default();
+                                suffix.push_str(&if paper {
+                                    format!(" + {}", name.to_string_lossy())
+                                } else {
+                                    format!(" · {} updated", name.to_string_lossy())
+                                });
+                            }
+                            None
+                        }
+                        // Cancelled along with the paper; that is already reported.
+                        Some(Ok(result)) if result.cancelled => None,
+                        Some(Ok(result)) => {
+                            self.diagnostics.extend(result.diagnostics);
+                            Some(result.log)
+                        }
+                        Some(Err(e)) => Some(e),
+                    };
+                    // The paper's preview stands; show why the supplement did not
+                    // build, after the paper's own log if that failed too.
+                    if let Some(log) = failure {
+                        suffix.push_str(" · supplement.tex failed");
+                        self.log = if paper {
+                            log
+                        } else {
+                            format!("{}\n\n── supplement.tex ──\n{log}", self.log)
+                        };
+                        self.show_log = true;
+                    }
+                    if !suffix.is_empty() {
+                        self.status = paper_status + &suffix;
+                    }
                 }
                 Event::Source(token, result, word) if token == self.nav_token => match result {
                     Ok(location) => self.jump_source_word(location, word),
@@ -801,7 +860,7 @@ impl App {
             self.pending_go = None;
             self.layers.preview_failed();
         }
-        if self.preview_pending && !self.scanning && !self.exporting {
+        if self.preview_pending && !self.scanning && !self.building && !self.exporting {
             self.preview_pending = false;
             if self.layers.layer == Layer::Preview && self.layers.enter_preview() {
                 self.start_build(ctx);
@@ -2940,6 +2999,97 @@ mod tests {
         app.poll(&ctx);
         assert_eq!(app.status, "Typeset in 1.20s");
         assert!(!app.show_log);
+        drop(app);
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn the_supplement_builds_after_the_paper_and_reports_without_hiding_it() {
+        let dir = std::env::temp_dir().join(format!("folio-supplement-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        ManagedProject::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        // Builds report the canonical project path, as the app holds it.
+        let real = dir.canonicalize().unwrap();
+        let result = |name: &str, success: bool, log: &str| BuildResult {
+            success,
+            cancelled: false,
+            pdf: dir.join(format!(".folio/{name}.pdf")),
+            published: success.then(|| real.join(format!("build/{name}.pdf"))),
+            log: log.into(),
+            diagnostics: vec![],
+            elapsed: Duration::from_millis(1200),
+        };
+        // The paper is reported at once; the build lasts until the supplement.
+        app.building = true;
+        app.tx
+            .send(Event::Build(Ok(result("main", true, "paper"))))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(app.building);
+        assert_eq!(app.status, "Typeset in 1.20s · build/main.pdf");
+        // Entering the PDF meanwhile waits for the build instead of being lost.
+        app.layers.edited();
+        app.enter_preview(&ctx, false);
+        assert!(app.preview_pending && app.building);
+        app.tx
+            .send(Event::Supplement(
+                Some(Ok(result("supplement", true, ""))),
+                true,
+            ))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(!app.building);
+        assert_eq!(
+            app.status, "Typeset in 1.20s · build/main.pdf + supplement.pdf",
+            "joined to the paper's message, not to the save's"
+        );
+        settle(&mut app, &ctx, |a| !a.preview_pending);
+        assert_eq!(
+            app.status, "Typesetting…",
+            "the queued preview build started"
+        );
+        assert!(app.building && !app.preview_pending);
+        app.cancel.store(true, Ordering::Relaxed);
+        settle(&mut app, &ctx, |a| !a.building);
+
+        // A failed supplement leaves the paper's preview and shows its own log.
+        app.building = true;
+        app.show_log = false;
+        app.tx
+            .send(Event::Build(Ok(result("main", true, "paper"))))
+            .unwrap();
+        app.tx
+            .send(Event::Supplement(
+                Some(Ok(result("supplement", false, "supplement error"))),
+                true,
+            ))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(!app.building);
+        assert!(
+            app.status.ends_with("· supplement.tex failed"),
+            "{}",
+            app.status
+        );
+        assert_eq!(app.log, "supplement error");
+        assert!(app.show_log);
+
+        // When both fail, the paper's error stays first in the log.
+        app.building = true;
+        app.tx
+            .send(Event::Build(Ok(result("main", false, "paper error"))))
+            .unwrap();
+        app.tx
+            .send(Event::Supplement(
+                Some(Ok(result("supplement", false, "supplement error"))),
+                false,
+            ))
+            .unwrap();
+        app.poll(&ctx);
+        assert!(app.log.starts_with("paper error"), "{}", app.log);
+        assert!(app.log.ends_with("supplement error"), "{}", app.log);
+        settle(&mut app, &ctx, |a| !a.scanning && !a.building);
         drop(app);
         fs::remove_dir_all(dir).unwrap();
     }

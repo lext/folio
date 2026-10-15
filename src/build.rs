@@ -466,6 +466,7 @@ fn snapshot(config: &BuildConfig, maps: &[&str]) -> io::Result<PathBuf> {
         return Err(e);
     }
     // Keep a short history without accumulating every auto-build on disk.
+    // Per document: supplement builds must not evict the paper's previews.
     let mut previews: Vec<_> = fs::read_dir(config.output_dir())
         .into_iter()
         .flatten()
@@ -478,6 +479,7 @@ fn snapshot(config: &BuildConfig, maps: &[&str]) -> io::Result<PathBuf> {
         })
         .filter(|e| e.file_type().is_ok_and(|t| t.is_dir() && !t.is_symlink()))
         .map(|e| e.path())
+        .filter(|p| p.join(pdf.file_name().unwrap()).is_file())
         .collect();
     previews.sort();
     for old in previews.iter().take(previews.len().saturating_sub(3)) {

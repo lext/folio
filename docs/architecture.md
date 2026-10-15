@@ -48,6 +48,7 @@ and file/line diagnostics. Cancellation terminates the process group with a
 short grace period; interrupted auxiliary output is cleaned before another
 attempt. Successful builds keep immutable PDF/map pairs under `.folio/` for
 the preview and navigation, and project builds also replace `build/main.pdf`
+(then `build/supplement.pdf`, built after it in the same job)
 atomically as the author's copy. Export's scratch builds do not publish.
 A failed build preserves the last successful preview and does not continually
 retry the same failed revision.

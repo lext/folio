@@ -218,9 +218,13 @@ fn finder_launch_builds_without_tex_in_shell_path() {
         "{}",
         String::from_utf8_lossy(&result.stderr)
     );
-    let pdf = String::from_utf8(result.stdout).unwrap();
-    assert!(std::path::Path::new(pdf.trim()).is_file());
-    assert!(pdf.trim().ends_with("main.pdf"));
+    // One line per document: the paper, then the project's supplement.
+    let stdout = String::from_utf8(result.stdout).unwrap();
+    let pdfs: Vec<_> = stdout.lines().collect();
+    assert_eq!(pdfs.len(), 2, "{stdout}");
+    assert!(pdfs[0].ends_with("build/main.pdf"));
+    assert!(pdfs[1].ends_with("build/supplement.pdf"));
+    assert!(pdfs.iter().all(|pdf| std::path::Path::new(pdf).is_file()));
     fs::remove_dir_all(dir).unwrap();
 }
 #[test]

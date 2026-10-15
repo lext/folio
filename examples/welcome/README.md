@@ -4,7 +4,7 @@ Build settings are in folio.project.toml.
 Write sections in sections/, figures in figures/, and table sources in tables/.
 Keep bibliography entries in references.bib or bibliography/.
 Optional styles/ and data/ hold local packages and supporting data.
-Builds write the PDF to build/main.pdf; .folio/ holds working files. Do not edit either.
+Builds write the PDFs to build/main.pdf and build/supplement.pdf; .folio/ holds working files. Do not edit either.
 
 Build: folio-cli build .
 Validate: folio-cli project check .
