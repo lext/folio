@@ -80,8 +80,9 @@ changes. Keep generated output, runtime downloads, build caches and personal
 projects out of commits. PDF figures are source assets and are not globally
 ignored. Preserve the existing MIT license and third-party notices.
 
-CI runs the same scripts on macOS (Apple silicon) and Linux (x86_64). Each
-Desktop job uploads its packaged archive as a `folio-<OS>-<CPU>`
+CI runs the same scripts on the supported platforms: macOS (Apple silicon) and
+Ubuntu 24.04 and 26.04 (x86_64). The `.deb` is built on 24.04 and installed on
+both releases before anything is published. Each Desktop job uploads its packages as a `folio-<OS>-<CPU>`
 artifact on the run's summary page, kept for 14 days. The archives retain
 executable modes and macOS symlinks; [GitHub artifact transport](https://github.com/actions/upload-artifact#permission-loss)
 does not preserve raw file permissions. A green macOS run does not establish
@@ -95,11 +96,15 @@ Linux runtime behavior.
 
 The script builds the current host in release mode, reads the version from
 `desktop/Cargo.toml`, includes PDFium and its notices, and preserves existing
-external settings. It produces `dist/Folio.app` plus a macOS ZIP, or a Linux
-directory plus a `.tar.gz`. Build from a clean checkout for shared artifacts so
+external settings. It produces `dist/Folio.app` plus a macOS ZIP and `.dmg`, or a
+Linux directory plus a `.tar.gz` and `.deb`. It refuses other platforms. Set
+`FOLIO_PACKAGE_VERSION` to `<version>+<build>` to stamp a pre-release build. Build from a clean checkout for shared artifacts so
 local settings cannot enter the package. macOS builds have an ad-hoc signature,
 not Developer ID signing or notarization.
 
-For a release, update the desktop Cargo version and lockfile, run the full checks,
-validate native behavior on both platforms, and inspect the resulting archive.
-Repository preparation and CI do not publish a GitHub release automatically.
+Every green push to `master` replaces the `rolling` prerelease on GitHub with the
+new `.dmg`, `.deb` and `SHA256SUMS`. For a proper release, update the desktop
+Cargo version and lockfile, run the full checks, validate native behavior on both
+platforms, merge, then push the matching tag (`git tag v<version>` and
+`git push origin v<version>`). CI publishes the release only when the tag matches
+`desktop/Cargo.toml` and every job passed.

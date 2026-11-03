@@ -1,6 +1,6 @@
 # Folio
 
-A minimal, local LaTeX editor for macOS and Linux. Written in Rust with
+A minimal, local LaTeX editor for macOS and Ubuntu. Written in Rust with
 **egui + wgpu**, with no webview, account or server.
 
 Write in one surface; switch to the PDF when you want to read. Folio saves and
@@ -13,9 +13,12 @@ project changes again.
 - Ordinary project files, a TOML build manifest, and verified flat LaTeX export.
 - Configurable keyboard and mouse bindings; a project browser available on demand.
 
+**Supported platforms:** macOS 12+ on Apple silicon, and Ubuntu 24.04 and 26.04
+on x86_64. Other systems are not supported or packaged.
+
 **Status:** actively developed. The native macOS app has been tested on Apple
-Silicon. Linux build and packaging support are supplied; native Linux validation
-is still outstanding. GPU acceleration covers UI and page composition; PDFium
+Silicon. CI builds and installs the Ubuntu package on both releases; interactive
+Linux validation is still outstanding. GPU acceleration covers UI and page composition; PDFium
 rasterizes pages on a background CPU worker.
 
 ## Build and run
@@ -25,7 +28,7 @@ Requirements: **Rust 1.90+**, a C compiler, Git, and a TeX distribution with
 `latexpand`. On macOS, install Xcode Command Line Tools and MacTeX (or BasicTeX
 with the [additional packages](CONTRIBUTING.md#development-setup)).
 
-On Debian/Ubuntu, install native windowing prerequisites:
+On Ubuntu, install native windowing prerequisites:
 
 ```sh
 sudo apt install build-essential pkg-config libxkbcommon-dev libwayland-dev \
@@ -54,9 +57,24 @@ To create a native bundle and archive:
 ./scripts/package.sh
 ```
 
-Output goes to `dist/`: `Folio.app` plus a ZIP on macOS, or a Linux directory and
-`.tar.gz`. Packaging targets the current host architecture. macOS requires 12+
-and uses a local ad-hoc signature; builds are not notarized. TeX is not bundled.
+Output goes to `dist/`: `Folio.app` plus a ZIP and a `.dmg` on macOS, or a Linux
+directory and `.tar.gz` plus a `.deb` (when `dpkg-deb` is installed). Packaging
+runs only on the supported platforms. Build the `.deb` on Ubuntu 24.04 so it
+also installs on 26.04 (it requires glibc 2.39+). macOS requires 12+ and uses a local ad-hoc
+signature; builds are not notarized. TeX is not bundled. The `.deb` installs to
+`/usr/lib/folio` with `/usr/bin/folio`; it ships no `folio.toml` beside the
+executable, so `~/.config/folio/folio.toml` applies.
+
+## Releases
+
+CI publishes downloads on [GitHub Releases](../../releases) after all checks pass:
+
+- **Rolling**: every push to `master` replaces the `rolling` prerelease with a
+  macOS `.dmg` (Apple silicon) and an Ubuntu 24.04/26.04 `.deb` (x86_64), versioned
+  `<version>+git.<timestamp>.<commit>`.
+- **Proper release**: set `version` in `desktop/Cargo.toml`, merge, then push a
+  matching tag, e.g. `git tag v0.9.5 && git push origin v0.9.5`. CI refuses a
+  tag that does not match the manifest.
 
 ## Everyday use
 
@@ -83,8 +101,52 @@ Right-click opens Commands. Line numbers are enabled by default.
 
 Application preferences and bindings live in [folio.toml](folio.toml), loaded
 beside the executable, then from `~/.config/folio/folio.toml`, then from bundled
-defaults. The project’s `folio.project.toml` selects its main file, TeX engine
-and build timeout. Sources, sections, figures and tables remain ordinary files.
+defaults. The project’s `folio.project.toml` selects its TeX engine and build
+timeout. Sources, sections, figures and tables remain ordinary files.
+
+## Project structure
+
+A project is a folder with `folio.project.toml` at its root. Cmd/Ctrl+N creates
+this layout; everything in it is a plain, Git-friendly file:
+
+```text
+paper/
+├── folio.project.toml      # project manifest: name, engine, timeout
+├── main.tex                # the paper; \input{sections/...} pulls in sections
+├── supplement.tex          # optional standalone supplement (own preamble)
+├── references.bib          # BibTeX/BibLaTeX entries
+├── sections/
+│   └── introduction.tex    # chapter and section sources
+├── figures/                # figure assets (PDF, PNG, ...)
+├── tables/                 # table sources
+├── bibliography/           # optional: further .bib files
+├── styles/                 # optional: local .sty, .cls, .bst
+├── data/                   # optional: supporting TOML/JSON/CSV data
+├── README.md
+├── .gitignore              # ignores .folio/, main.pdf, supplement.pdf
+│
+├── main.pdf                # build output, replaced only by a successful build
+├── supplement.pdf          # build output, when supplement.tex exists
+└── .folio/                 # LaTeX working files (aux, log, synctex)
+```
+
+The manifest is short and strictly validated; unknown fields are rejected:
+
+```toml
+schema = 1
+
+[project]
+name = "paper"
+main = "main.tex"       # always main.tex
+
+[build]
+engine = "pdflatex"     # pdflatex, xelatex or lualatex
+timeout_seconds = 120   # 0 to 86400; 0 disables the limit
+```
+
+Each build typesets `main.tex`, then `supplement.tex` if present. `preamble.tex`
+may also live at the root. See [examples/](examples/README.md) for complete
+projects and the [user guide](docs/guide.md) for bibliography and export details.
 
 ## Documentation
 

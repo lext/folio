@@ -55,7 +55,8 @@ python3 -m unittest discover -s scripts/tests -v
 ```
 
 Core and desktop suites run without a display. Real integrations are opt-in;
-CI installs their dependencies and uses the same script on macOS and Linux.
+CI installs their dependencies and uses the same script on macOS (Apple silicon)
+and Ubuntu 24.04/26.04 (x86_64).
 
 ## Native behavior and remaining coverage
 

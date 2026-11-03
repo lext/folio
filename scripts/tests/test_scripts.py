@@ -163,6 +163,49 @@ class PackagingTests(unittest.TestCase):
         self.assertIn("setup-pdfium.sh", result.stderr)
         self.assertFalse(self.log.exists())
 
+    def fake_dpkg_deb(self):
+        # Keep a copy of the staged tree; the real tool is not on macOS runners.
+        copy = self.root / "staged-deb"
+        tool = self.root / "bin/dpkg-deb"
+        tool.write_text('#!/bin/sh\nfor a; do root="$out"; out="$a"; done\n'
+                        f'cp -R "$root" "{copy}" && touch "$out"\n')
+        tool.chmod(0o755)
+        return copy
+
+    def test_debian_package_installs_beside_pdfium_without_shadowing_user_settings(self):
+        staged = self.fake_dpkg_deb()
+        self.env["FOLIO_PACKAGE_VERSION"] = "9.8.7+git.20261103.abcdef0"
+        result = self.package()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue((self.root / "dist/folio_9.8.7-git.20261103.abcdef0_amd64.deb").is_file())
+        self.assertTrue((self.root / "dist/folio-9.8.7-git.20261103.abcdef0-linux-x86_64.tar.gz").is_file())
+        self.assertTrue(os.access(staged / "usr/lib/folio/folio", os.X_OK))
+        self.assertTrue((staged / "usr/lib/folio/libpdfium.so").is_file())
+        self.assertEqual(os.readlink(staged / "usr/bin/folio"), "../lib/folio/folio")
+        # A settings file beside the executable would override ~/.config/folio.
+        self.assertFalse((staged / "usr/lib/folio/folio.toml").exists())
+        self.assertTrue((staged / "usr/share/doc/folio/folio.toml.example").is_file())
+        self.assertTrue((staged / "usr/share/doc/folio/licenses/PDFium-LICENSE").is_file())
+        self.assertTrue((staged / "usr/share/applications/folio.desktop").is_file())
+        control = (staged / "DEBIAN/control").read_text()
+        self.assertIn("Version: 9.8.7+git.20261103.abcdef0\n", control)
+        self.assertIn("Architecture: amd64\n", control)
+        self.assertFalse((self.root / "dist/deb").exists())
+
+    def test_unsupported_platforms_fail_before_building(self):
+        (self.root / "bin/uname").write_text('#!/bin/sh\ncase "$1" in -s) echo Linux;; -m) echo aarch64;; esac\n')
+        result = self.package()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("Unsupported platform Linux/aarch64", result.stderr)
+        self.assertFalse(self.log.exists())
+
+    def test_package_version_must_extend_the_manifest_version(self):
+        self.env["FOLIO_PACKAGE_VERSION"] = "1.0.0"
+        result = self.package()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("9.8.7", result.stderr)
+        self.assertFalse(self.log.exists())
+
 
 class IgnoreRulesTests(unittest.TestCase):
     def test_generated_files_are_ignored_but_pdf_assets_and_lockfiles_are_not(self):
