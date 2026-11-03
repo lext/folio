@@ -121,7 +121,10 @@ impl Project {
                 directory.join("references.bib"),
                 "% Add BibTeX or BibLaTeX entries here.\n",
             )?;
-            fs::write(directory.join(".gitignore"), ".folio/\n/main.pdf\n/supplement.pdf\n.DS_Store\n")?;
+            fs::write(
+                directory.join(".gitignore"),
+                ".folio/\n/main.pdf\n/supplement.pdf\n.DS_Store\n",
+            )?;
             fs::write(
                 directory.join("README.md"),
                 "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nsupplement.tex is a separate document for supplementary material.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\nBuilds write main.pdf and supplement.pdf beside their sources; .folio/ holds working files. Do not edit either.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
