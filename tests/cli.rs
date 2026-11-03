@@ -125,7 +125,7 @@ fn successful_build_accepts_non_utf8_output() {
 
 #[test]
 #[cfg(unix)]
-fn successful_pdf_is_published_to_build_and_its_map_stays_with_the_preview() {
+fn successful_pdf_is_published_beside_main_and_its_map_stays_with_the_preview() {
     for (label, script, extension) in [
         ("no-map", "true", None),
         (
@@ -143,7 +143,7 @@ fn successful_pdf_is_published_to_build_and_its_map_stays_with_the_preview() {
         // The paper, then the supplement every new project has.
         let stdout = String::from_utf8(result.stdout).unwrap();
         let published: Vec<_> = stdout.lines().map(std::path::PathBuf::from).collect();
-        let build = dir.join("paper/build").canonicalize().unwrap();
+        let build = dir.join("paper").canonicalize().unwrap();
         assert_eq!(
             published,
             [build.join("main.pdf"), build.join("supplement.pdf")]
@@ -151,7 +151,7 @@ fn successful_pdf_is_published_to_build_and_its_map_stays_with_the_preview() {
         assert_eq!(std::fs::read(&published[1]).unwrap(), b"PDF fixture");
         let path = &published[0];
         assert_eq!(std::fs::read(path).unwrap(), b"PDF fixture");
-        // Navigation reads the immutable preview copy; build/ holds only the PDF.
+        // Navigation reads the immutable preview copy; the root holds only the PDF.
         let previews: Vec<_> = std::fs::read_dir(dir.join("paper/.folio"))
             .unwrap()
             .flatten()

@@ -31,7 +31,7 @@ pub struct BuildConfig {
     pub timeout: Duration,
     pub use_latexmkrc: bool,
     pub run_bibliography: bool,
-    /// Copy each successful PDF to `build/` beside the main file, where the
+    /// Copy each successful PDF beside the main file, where the
     /// author can open, share or attach it. Off for export's scratch builds.
     pub publish: bool,
 }
@@ -54,13 +54,9 @@ impl BuildConfig {
             .join(self.root.file_name().unwrap_or_default())
             .with_extension("pdf")
     }
-    /// The finished PDF the author sees, e.g. `build/main.pdf`.
+    /// The finished PDF the author sees, e.g. `main.pdf` beside `main.tex`.
     pub fn published_pdf(&self) -> PathBuf {
-        self.root
-            .parent()
-            .unwrap_or(Path::new("."))
-            .join("build")
-            .join(self.pdf_path().file_name().unwrap_or_default())
+        self.root.with_extension("pdf")
     }
     pub fn arguments(&self) -> Vec<String> {
         let mut args = vec![
@@ -689,19 +685,19 @@ mod tests {
         assert!(config.output_dir().join("build-interrupted").is_file());
     }
     #[test]
-    fn only_publishing_builds_write_build_pdf_and_a_failure_keeps_the_last_one() {
+    fn only_publishing_builds_write_the_pdf_and_a_failure_keeps_the_last_one() {
         let fixture = Fixture::new();
         let mut config = fixture.config();
         let tool = fixture.program("printf first > .folio/main.pdf");
         let scratch =
             compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
         assert!(scratch.success && scratch.published.is_none());
-        assert!(!fixture.0.join("build").exists());
+        assert!(!fixture.0.join("main.pdf").exists());
 
         config.publish = true;
         let tool = fixture.program("printf second > .folio/main.pdf");
         let built = compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
-        let published = fixture.0.canonicalize().unwrap().join("build/main.pdf");
+        let published = fixture.0.canonicalize().unwrap().join("main.pdf");
         assert_eq!(built.published.as_ref(), Some(&published));
         assert_eq!(fs::read(&published).unwrap(), b"second");
 

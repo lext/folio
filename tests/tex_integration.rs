@@ -222,8 +222,8 @@ fn finder_launch_builds_without_tex_in_shell_path() {
     let stdout = String::from_utf8(result.stdout).unwrap();
     let pdfs: Vec<_> = stdout.lines().collect();
     assert_eq!(pdfs.len(), 2, "{stdout}");
-    assert!(pdfs[0].ends_with("build/main.pdf"));
-    assert!(pdfs[1].ends_with("build/supplement.pdf"));
+    assert!(pdfs[0].ends_with("main.pdf"));
+    assert!(pdfs[1].ends_with("supplement.pdf"));
     assert!(pdfs.iter().all(|pdf| std::path::Path::new(pdf).is_file()));
     fs::remove_dir_all(dir).unwrap();
 }

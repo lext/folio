@@ -49,8 +49,8 @@ may live at the root. `supplement.tex` is a standalone document for supplementar
 material: it has its own preamble, `main.tex` does not include it, and projects
 without it remain valid. Required empty folders contain `.gitkeep` so a Git checkout
 retains the layout. Each build typesets `main.tex` and then, when it exists,
-`supplement.tex`, and writes their PDFs to `build/main.pdf` and
-`build/supplement.pdf`. Each is replaced in one step so a PDF viewer never reads
+`supplement.tex`, and writes their PDFs to `main.pdf` and
+`supplement.pdf` beside them. Each is replaced in one step so a PDF viewer never reads
 a partial file, and a failed build leaves the last good one. The preview shows
 the paper as soon as it is done; a supplement that fails is reported with its
 log without hiding it. LaTeX's working files stay in `.folio/`. New projects
@@ -87,7 +87,8 @@ Hidden files and folders (`.github/`, `.gitattributes`) and editor backup files
 (`main.tex~`, `.swp`, `.bak`) are ignored, not rejected. So is the output of a
 build run outside Folio, such as `latexmk main.tex` in a terminal: auxiliary
 files (`main.aux`, `main.log`, `main.synctex.gz`, …) and a PDF named after a
-`.tex` file beside it. Folio keeps its own build in `.folio/` and `build/`.
+`.tex` file beside it. Folio keeps its own build in `.folio/`; a `build/` folder left by older versions is
+ignored too.
 
 Opening a different project asks how to handle unsaved files. Standalone sources
 and folders without a manifest are refused. To bring existing LaTeX into Folio,
@@ -176,7 +177,7 @@ CLI equivalents (after `cargo build --bin folio-cli`):
 ```sh
 ./target/debug/folio-cli project new ../paper xe
 ./target/debug/folio-cli project check ../paper
-./target/debug/folio-cli build ../paper   # prints build/main.pdf and build/supplement.pdf
+./target/debug/folio-cli build ../paper   # prints main.pdf and supplement.pdf
 ./target/debug/folio-cli project export ../paper ../submission --bibliography inline
 ./target/debug/folio-cli project export ../paper ../submission-bib --bibliography bibtex
 ```

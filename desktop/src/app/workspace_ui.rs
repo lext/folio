@@ -465,7 +465,7 @@ impl App {
             self.last_status.clone_from(&self.status);
             self.notice_until = Instant::now() + Duration::from_secs(4);
         }
-        let stale = self.layers.layer == Layer::Preview && self.layers.stale();
+        let stale = self.layers.layer == Layer::Preview && self.layers.pending();
         if self.building
             || self.exporting
             || stale

@@ -20,6 +20,11 @@ impl Layers {
     pub fn stale(&self) -> bool {
         self.built != Some(self.revision)
     }
+    /// Out of date with a build still to come. A revision that failed waits
+    /// for an edit or an explicit retry, so it is not pending.
+    pub fn pending(&self) -> bool {
+        self.stale() && self.failed != Some(self.revision)
+    }
     pub fn can_auto_build(&self) -> bool {
         self.stale() && self.compiling.is_none() && self.failed != Some(self.revision)
     }
@@ -62,8 +67,10 @@ mod tests {
         assert!(!state.can_auto_build());
         state.finished(false);
         assert!(!state.can_auto_build());
+        // Nothing is coming until an edit, so nothing is reported as pending.
+        assert!(state.stale() && !state.pending());
         state.edited();
-        assert!(state.can_auto_build());
+        assert!(state.can_auto_build() && state.pending());
         assert!(state.enter_preview());
         state.finished(false);
         assert!(state.enter_preview());

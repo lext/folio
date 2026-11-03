@@ -121,10 +121,10 @@ impl Project {
                 directory.join("references.bib"),
                 "% Add BibTeX or BibLaTeX entries here.\n",
             )?;
-            fs::write(directory.join(".gitignore"), ".folio/\nbuild/\n.DS_Store\n")?;
+            fs::write(directory.join(".gitignore"), ".folio/\n/main.pdf\n/supplement.pdf\n.DS_Store\n")?;
             fs::write(
                 directory.join("README.md"),
-                "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nsupplement.tex is a separate document for supplementary material.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\nBuilds write the PDFs to build/main.pdf and build/supplement.pdf; .folio/ holds working files. Do not edit either.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
+                "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nsupplement.tex is a separate document for supplementary material.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\nBuilds write main.pdf and supplement.pdf beside their sources; .folio/ holds working files. Do not edit either.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
             )?;
             Self::load(directory)
         })();
@@ -222,7 +222,8 @@ impl Project {
                     relative.display()
                 )));
             }
-            // Generated: .folio/ holds Folio's working files, build/ the PDF.
+            // Generated: .folio/ holds Folio's working files; build/ held the PDF
+            // in older versions.
             if depth == 0 && (relative == Path::new(".folio") || relative == Path::new("build")) {
                 if !kind.is_dir() {
                     return Err(invalid(format!(
@@ -275,8 +276,7 @@ impl Project {
         Ok(self.build_configs()?.remove(0))
     }
     /// main.tex, then supplement.tex when the project has one. A project
-    /// build typesets both and publishes `build/main.pdf` and
-    /// `build/supplement.pdf`.
+    /// build typesets both and publishes `main.pdf` and `supplement.pdf`.
     pub fn build_configs(&self) -> io::Result<Vec<BuildConfig>> {
         let current = Self::load(&self.directory)?;
         let files = current.files()?;

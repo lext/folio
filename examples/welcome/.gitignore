@@ -1,3 +1,4 @@
 .folio/
-build/
+/main.pdf
+/supplement.pdf
 .DS_Store

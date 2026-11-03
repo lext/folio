@@ -765,7 +765,7 @@ impl App {
                                         format!("Typeset in {:.2}s", result.elapsed.as_secs_f32())
                                     }
                                 };
-                                // Name the shareable copy, e.g. build/main.pdf.
+                                // Name the shareable copy, e.g. main.pdf.
                                 if let Some(published) = &result.published {
                                     let shown = self
                                         .managed
@@ -3015,7 +3015,7 @@ mod tests {
             success,
             cancelled: false,
             pdf: dir.join(format!(".folio/{name}.pdf")),
-            published: success.then(|| real.join(format!("build/{name}.pdf"))),
+            published: success.then(|| real.join(format!("{name}.pdf"))),
             log: log.into(),
             diagnostics: vec![],
             elapsed: Duration::from_millis(1200),
@@ -3027,7 +3027,7 @@ mod tests {
             .unwrap();
         app.poll(&ctx);
         assert!(app.building);
-        assert_eq!(app.status, "Typeset in 1.20s · build/main.pdf");
+        assert_eq!(app.status, "Typeset in 1.20s · main.pdf");
         // Entering the PDF meanwhile waits for the build instead of being lost.
         app.layers.edited();
         app.enter_preview(&ctx, false);
@@ -3041,7 +3041,7 @@ mod tests {
         app.poll(&ctx);
         assert!(!app.building);
         assert_eq!(
-            app.status, "Typeset in 1.20s · build/main.pdf + supplement.pdf",
+            app.status, "Typeset in 1.20s · main.pdf + supplement.pdf",
             "joined to the paper's message, not to the save's"
         );
         settle(&mut app, &ctx, |a| !a.preview_pending);
