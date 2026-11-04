@@ -126,6 +126,14 @@ fn supplement_is_an_optional_standalone_root_document() {
             .unwrap()
             .contains(&std::path::PathBuf::from("supplement.tex"))
     );
+    assert_eq!(p.build_configs().unwrap().len(), 2);
+    // A supplement that main.tex \input's is part of the paper, not a document.
+    fs::write(
+        f.0.join("supplement.tex"),
+        "% \\documentclass{article}\n\\section*{Supplementary Information}\n",
+    )
+    .unwrap();
+    assert_eq!(p.build_configs().unwrap().len(), 1);
     // Projects created before the supplement existed remain valid.
     fs::remove_file(f.0.join("supplement.tex")).unwrap();
     assert!(

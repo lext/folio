@@ -284,7 +284,18 @@ impl Project {
         let current = Self::load(&self.directory)?;
         let files = current.files()?;
         let mut roots = vec!["main.tex"];
-        if files.iter().any(|file| file == Path::new("supplement.tex")) {
+        // Only a standalone supplement is a second document; one that
+        // main.tex \input's is a fragment and fails on its own.
+        if files.iter().any(|file| file == Path::new("supplement.tex"))
+            && fs::read_to_string(self.directory.join("supplement.tex")).is_ok_and(|text| {
+                text.lines().any(|line| {
+                    line.split('%')
+                        .next()
+                        .unwrap_or("")
+                        .contains("\\documentclass")
+                })
+            })
+        {
             roots.push("supplement.tex");
         }
         Ok(roots

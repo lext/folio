@@ -142,6 +142,35 @@ pub fn parse_diagnostics(log: &str) -> Vec<Diagnostic> {
     }
     result
 }
+/// TeX's error records, each from its `file:line:` or `!` line through the
+/// `l.<line>` context, so the cause shows without the package-loading noise.
+pub fn error_excerpt(log: &str) -> String {
+    let lines: Vec<&str> = log.lines().collect();
+    let mut excerpt = String::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let line = lines[i];
+        let starts = line.starts_with("! ")
+            || line.starts_with("Runaway argument?")
+            || !parse_diagnostics(line).is_empty();
+        if !starts {
+            i += 1;
+            continue;
+        }
+        let end = (i + 1..lines.len().min(i + 12))
+            .find(|&j| {
+                lines[j].starts_with("l.")
+                    && lines[j][2..].starts_with(|c: char| c.is_ascii_digit())
+            })
+            .map_or(i + 1, |j| (j + 2).min(lines.len()));
+        for line in &lines[i..end] {
+            excerpt.push_str(line);
+            excerpt.push('\n');
+        }
+        i = end;
+    }
+    excerpt
+}
 /// The program a shell reported as absent, as in `sh: biber: command not found`
 /// or dash's `sh: 1: biber: not found`. latexmk only says that the rule failed.
 pub fn missing_tool(log: &str) -> Option<&str> {
@@ -209,7 +238,11 @@ fn compile_with_program(
             fingerprint(&config.pdf_path().with_extension(extension)),
         )
     });
-    let log_path = config.output_dir().join("build-output.txt");
+    // One per document: the supplement's run must not overwrite the paper's.
+    let log_path = config
+        .output_dir()
+        .join(config.root.file_name().unwrap_or_default())
+        .with_extension("build-output.txt");
     let stdout = fs::File::create(&log_path)?;
     let mut cmd = Command::new(program);
     // Finder's PATH often omits TeX. latexmk must also find its child engines,
@@ -287,6 +320,20 @@ fn compile_with_program(
         // latexmk ran to completion, so its auxiliary files are consistent even
         // when the document has an error. Only a killed run needs a clean retry.
         fs::remove_file(&interrupted)?;
+        if !success && diagnostics.is_empty() {
+            // Unchanged sources since a failed run: latexmk only says "gave an
+            // error in previous invocation". The cause is in TeX's own log.
+            let tex_log = config.pdf_path().with_extension("log");
+            if let Ok(bytes) = fs::read(&tex_log) {
+                let tex_log = String::from_utf8_lossy(&bytes);
+                let excerpt = error_excerpt(&tex_log);
+                if !excerpt.is_empty() {
+                    diagnostics = parse_diagnostics(&excerpt);
+                    log.push_str("\n── TeX log ──\n");
+                    log.push_str(&excerpt);
+                }
+            }
+        }
     }
     if !cancelled {
         // A successful build too: the PDF is written, with [?] for citations.
@@ -642,6 +689,29 @@ mod tests {
             "auxiliary files must survive: {}",
             retried.log
         );
+    }
+    #[test]
+    fn a_replayed_failure_reports_the_error_from_the_tex_log() {
+        let fixture = Fixture::new();
+        let config = fixture.config();
+        fs::create_dir_all(config.output_dir()).unwrap();
+        fs::write(
+            config.output_dir().join("main.log"),
+            "(./main.tex (./sections/results.tex\nRunaway argument?\n{@article{segal2013multicenter}. \n./sections/results.tex:48: Paragraph ended before \\@citex was complete.\n<to be read again> \n                   \\par \nl.48 \n     \nI suspect you've forgotten a `}'\n",
+        )
+        .unwrap();
+        let tool = fixture.program(
+            "echo \"Latexmk: Nothing to do for 'main.tex'.\"\necho '  xelatex: gave an error in previous invocation of latexmk.'\nexit 12",
+        );
+        let failed =
+            compile_with_program(&config, Arc::new(AtomicBool::new(false)), &tool).unwrap();
+        assert!(!failed.success);
+        assert_eq!(failed.diagnostics.len(), 1, "{}", failed.log);
+        assert_eq!(failed.diagnostics[0].line, 48);
+        assert!(failed.diagnostics[0].message.contains("\\@citex"));
+        assert!(failed.log.contains("Runaway argument?"), "{}", failed.log);
+        assert!(failed.log.contains("{@article{segal2013multicenter}"));
+        assert!(!failed.log.contains("I suspect"), "{}", failed.log);
     }
     #[test]
     fn child_tex_processes_do_not_wrap_log_lines() {
