@@ -1,6 +1,6 @@
 # Using Folio
 
-[Build and run](../README.md#build-and-run) · [Contributing](../CONTRIBUTING.md)
+[Build from source](../README.md#build-from-source) · [Contributing](../CONTRIBUTING.md)
 
 ## Projects
 

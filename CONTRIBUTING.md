@@ -6,7 +6,7 @@ an issue before introducing dependencies or changing the project format.
 
 ## Development setup
 
-Use Rust 1.90 or newer, a C compiler and Git. The [README](README.md#build-and-run)
+Use Rust 1.90 or newer, a C compiler and Git. The [README](README.md#build-from-source)
 lists the platform libraries. Python 3 is needed only for repository tooling
 tests. PDFium and TeX are optional for ordinary Rust unit tests.
 
@@ -81,12 +81,10 @@ projects out of commits. PDF figures are source assets and are not globally
 ignored. Preserve the existing MIT license and third-party notices.
 
 CI runs the same scripts on the supported platforms: macOS (Apple silicon) and
-Ubuntu 24.04 and 26.04 (x86_64). The `.deb` is built on 24.04 and installed on
-both releases before anything is published. Each Desktop job uploads its packages as a `folio-<OS>-<CPU>`
-artifact on the run's summary page, kept for 14 days. The archives retain
-executable modes and macOS symlinks; [GitHub artifact transport](https://github.com/actions/upload-artifact#permission-loss)
-does not preserve raw file permissions. A green macOS run does not establish
-Linux runtime behavior.
+Ubuntu 24.04 and 26.04 (x86_64). It checks that everything compiles and passes
+its tests, including real TeX/PDF integrations; it publishes no binaries, since
+users build from source. A green macOS run does not establish Linux runtime
+behavior.
 
 ## Packaging
 
@@ -96,15 +94,11 @@ Linux runtime behavior.
 
 The script builds the current host in release mode, reads the version from
 `desktop/Cargo.toml`, includes PDFium and its notices, and preserves existing
-external settings. It produces `dist/Folio.app` plus a macOS ZIP and `.dmg`, or a
-Linux directory plus a `.tar.gz` and `.deb`. It refuses other platforms. Set
-`FOLIO_PACKAGE_VERSION` to `<version>+<build>` to stamp a pre-release build. Build from a clean checkout for shared artifacts so
-local settings cannot enter the package. macOS builds have an ad-hoc signature,
+external settings. It produces `dist/Folio.app` plus a macOS ZIP, or a Linux
+directory plus a `.tar.gz`. It refuses unsupported platforms. Build from a clean
+checkout for shared artifacts so local settings cannot enter the package. macOS builds have an ad-hoc signature,
 not Developer ID signing or notarization.
 
-Every green push to `master` replaces the `rolling` prerelease on GitHub with the
-new `.dmg`, `.deb` and `SHA256SUMS`. For a proper release, update the desktop
-Cargo version and lockfile, run the full checks, validate native behavior on both
-platforms, merge, then push the matching tag (`git tag v<version>` and
-`git push origin v<version>`). CI publishes the release only when the tag matches
-`desktop/Cargo.toml` and every job passed.
+For a version bump, update the desktop Cargo version and lockfile, run the full
+checks and validate native behavior on both platforms. There are no binary
+releases; users build from source.

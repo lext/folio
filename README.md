@@ -14,14 +14,15 @@ project changes again.
 - Configurable keyboard and mouse bindings; a project browser available on demand.
 
 **Supported platforms:** macOS 12+ on Apple silicon, and Ubuntu 24.04 and 26.04
-on x86_64. Other systems are not supported or packaged.
+on x86_64. Other systems are not supported. There are no prebuilt binaries:
+build Folio from source as described below.
 
 **Status:** actively developed. The native macOS app has been tested on Apple
-Silicon. CI builds and installs the Ubuntu package on both releases; interactive
-Linux validation is still outstanding. GPU acceleration covers UI and page composition; PDFium
+Silicon. CI compiles and tests it on every supported platform; interactive Linux
+validation is still outstanding. GPU acceleration covers UI and page composition; PDFium
 rasterizes pages on a background CPU worker.
 
-## Build and run
+## Build from source
 
 Requirements: **Rust 1.90+**, a C compiler, Git, and a TeX distribution with
 `latexmk` and `synctex`. Bibliography/export features also use BibTeX or Biber and
@@ -32,7 +33,7 @@ On Ubuntu, install native windowing prerequisites:
 
 ```sh
 sudo apt install build-essential pkg-config libxkbcommon-dev libwayland-dev \
-  libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libegl1-mesa-dev \
+  libxcb-shape0-dev libxcb-xfixes0-dev libssl-dev libegl-dev \
   mesa-vulkan-drivers xdg-desktop-portal xdg-desktop-portal-gtk
 ```
 
@@ -51,30 +52,16 @@ with the required TeX packages installed. Setup downloads PDFium **7881** into
 `runtime/` and retains its licenses. To use a compatible existing library, set
 `FOLIO_PDFIUM_LIB` to its `.dylib` or `.so` path when running Folio.
 
-To create a native bundle and archive:
+To install a release build instead of running from the checkout:
 
 ```sh
 ./scripts/package.sh
 ```
 
-Output goes to `dist/`: `Folio.app` plus a ZIP and a `.dmg` on macOS, or a Linux
-directory and `.tar.gz` plus a `.deb` (when `dpkg-deb` is installed). Packaging
-runs only on the supported platforms. Build the `.deb` on Ubuntu 24.04 so it
-also installs on 26.04 (it requires glibc 2.39+). macOS requires 12+ and uses a local ad-hoc
-signature; builds are not notarized. TeX is not bundled. The `.deb` installs to
-`/usr/lib/folio` with `/usr/bin/folio`; it ships no `folio.toml` beside the
-executable, so `~/.config/folio/folio.toml` applies.
-
-## Releases
-
-CI publishes downloads on [GitHub Releases](../../releases) after all checks pass:
-
-- **Rolling**: every push to `master` replaces the `rolling` prerelease with a
-  macOS `.dmg` (Apple silicon) and an Ubuntu 24.04/26.04 `.deb` (x86_64), versioned
-  `<version>+git.<timestamp>.<commit>`.
-- **Proper release**: set `version` in `desktop/Cargo.toml`, merge, then push a
-  matching tag, e.g. `git tag v0.9.5 && git push origin v0.9.5`. CI refuses a
-  tag that does not match the manifest.
+Output goes to `dist/`: `Folio.app` on macOS (drag it to Applications), or a
+`folio-linux-x86_64` directory on Ubuntu whose `folio` executable can be run in
+place. Each comes with a ZIP or `.tar.gz` copy. macOS requires 12+ and uses a
+local ad-hoc signature. TeX is not bundled.
 
 ## Everyday use
 
