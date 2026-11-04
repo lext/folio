@@ -393,6 +393,13 @@ take their space. The page is centered horizontally and tall pages start at the
 top. Fitting adapts to window and panel resizing. Manual zoom stays in effect
 until the next source-to-PDF switch; recompiling in PDF keeps it.
 
+Links in the PDF work as in a PDF reader. Click a `\ref`, `\eqref`, `\cite` or
+table-of-contents entry (with `hyperref` loaded) to show its destination at the
+top of the canvas, for example the table a reference names. The pointer becomes
+a hand over a link. **Cmd/Ctrl + [** (or **Alt + Left**) returns to where you
+clicked; each followed link is remembered, so Back retraces a chain of them.
+Web and mail links (`\url`, `\href`, DOIs) open in the browser.
+
 In PDF view, **Space** immediately restores width fitting. **Double-Space** (two
 taps within 350 ms) fits the whole current page. Holding Space does not count as
 a double tap, and intervening commands, scrolling or focus changes break the
@@ -471,6 +478,7 @@ remain editable; the comparison panel explains that no repository was found.
 | Cmd/Ctrl + Shift + D | Git comparison |
 | Cmd/Ctrl + Shift + L | Toggle compiler output |
 | PageDown / PageUp | Next / previous PDF page |
+| Cmd/Ctrl + [ or Alt + Left | Back to where a PDF link was clicked |
 | Escape | Dismiss launcher, search or secondary panels |
 | Ctrl + Space | Open contextual completion |
 | Tab / Shift + Tab | Next / previous completion suggestion (also Down / Up) |

@@ -5,7 +5,7 @@ use crate::settings::{Action, PdfFit, Settings, modifiers_match};
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, TextureHandle, Vec2};
 use folio_core::{
     navigation::WordAnchor,
-    pdf::{CacheBudget, PageText, PageTransform},
+    pdf::{CacheBudget, Link, LinkTarget, PageText, PageTransform},
     synctex::PdfLocation,
 };
 use std::sync::Arc;
@@ -27,6 +27,12 @@ pub struct Preview {
     next_path: Option<PathBuf>,
     sizes: Vec<(f32, f32)>,
     texts: Vec<Option<PageText>>,
+    links: Vec<Vec<Link>>,
+    /// A link destination: zero-based page and top-down points, shown at the
+    /// top of the canvas by the next layout pass.
+    target: Option<(usize, f32)>,
+    /// Where each followed link was clicked from, for Back.
+    history: Vec<(usize, f32)>,
     textures: HashMap<u64, TextureHandle>,
     fresh: HashSet<u64>,
     failed: HashSet<u64>,
@@ -102,6 +108,9 @@ impl Preview {
             next_path: None,
             sizes: vec![],
             texts: vec![],
+            links: vec![],
+            target: None,
+            history: vec![],
             textures: HashMap::new(),
             fresh: HashSet::new(),
             failed: HashSet::new(),
@@ -230,6 +239,9 @@ impl Preview {
         self.sizes.clear();
         self.layout.clear();
         self.texts.clear();
+        self.links.clear();
+        self.target = None;
+        self.history.clear();
         self.textures.clear();
         self.plan.clear();
         self.fresh.clear();
@@ -294,6 +306,7 @@ impl Preview {
         let (_, rx) = std::sync::mpsc::channel();
         self.worker = pdf_worker::Worker { tx, rx };
         self.texts = vec![None; sizes.len()];
+        self.links = vec![vec![]; sizes.len()];
         self.sizes = sizes;
         self.layout.clear();
         self.page = 1;
@@ -316,10 +329,60 @@ impl Preview {
             self.next_path = None;
         }
     }
+    /// The page and top-down point at the top of the canvas, as Back restores it.
+    fn view_top(&self, viewport: Rect) -> (usize, f32) {
+        let top = viewport.top() + 24.;
+        let page = self
+            .layout
+            .pages
+            .partition_point(|r| r.bottom() < top)
+            .min(self.layout.pages.len().saturating_sub(1));
+        let y = self.layout.pages.get(page).map_or(0., |rect| {
+            ((top - rect.top()) * self.sizes[page].0.max(1.) / rect.width().max(1.)).max(0.)
+        });
+        (page, y)
+    }
     pub fn jump(&mut self, location: PdfLocation) {
+        self.target = None;
         self.page = location.page;
         self.jump = Some(location.page.saturating_sub(1));
         self.highlight = Some(location);
+    }
+    /// Show a link's destination, remembering `from` for Back. Web and mail
+    /// links open in the browser; other schemes (file:, javascript:) never run.
+    fn follow(&mut self, ctx: &egui::Context, target: &LinkTarget, from: (usize, f32)) {
+        match target {
+            LinkTarget::Page { page, y } if *page < self.sizes.len() => {
+                self.history.push(from);
+                let y = y.map_or(0., |y| (self.sizes[*page].1 - y).max(0.));
+                self.show_target(*page, y);
+            }
+            LinkTarget::Uri(uri)
+                if ["http://", "https://", "mailto:"]
+                    .iter()
+                    .any(|scheme| uri.to_ascii_lowercase().starts_with(scheme)) =>
+            {
+                ctx.open_url(egui::OpenUrl::new_tab(uri));
+            }
+            _ => {}
+        }
+        ctx.request_repaint();
+    }
+    fn show_target(&mut self, page: usize, y: f32) {
+        self.page = page + 1;
+        self.jump = Some(page);
+        self.target = Some((page, y));
+        self.highlight = None;
+        self.selection = None;
+        self.clicked_point = None;
+    }
+    /// Return to where the last followed link was clicked.
+    pub fn back(&mut self) -> bool {
+        let Some((page, y)) = self.history.pop() else {
+            return false;
+        };
+        self.show_target(page, y);
+        true
     }
     fn search(&mut self) {
         self.results = self
@@ -362,6 +425,10 @@ impl Preview {
                     self.generation = generation;
                     self.path = self.next_path.take();
                     self.texts = vec![None; sizes.len()];
+                    self.links = vec![vec![]; sizes.len()];
+                    // A rebuilt PDF keeps its pages but not their link positions.
+                    self.history.retain(|(page, _)| *page < sizes.len());
+                    self.target = None;
                     self.sizes = sizes;
                     self.layout.clear();
                     // Retain the old pixels as a bounded fallback until fresh
@@ -384,8 +451,10 @@ impl Preview {
                     generation,
                     page,
                     text,
+                    links,
                 } if generation == self.generation => {
                     if page < self.texts.len() {
+                        self.links[page] = links;
                         self.results.retain(|(p, _)| *p != page);
                         self.results
                             .extend(text.find(&self.query).into_iter().map(|r| (page, r)));
@@ -656,30 +725,39 @@ impl Preview {
             // row, compiler panel or window changes the available canvas.
             self.jump = Some(self.page.saturating_sub(1));
         }
+        let target = self.target.take();
         if let Some(page) = self.jump.take()
             && let Some(rect) = self.layout.pages.get(page)
         {
-            let point = self
-                .highlight
-                .as_ref()
-                .filter(|h| h.page == page + 1 && self.fit != Some(PdfFit::Page))
-                .map(|h| {
-                    rect.min + Vec2::new(h.x, h.y) * (rect.width() / self.sizes[page].0.max(1.))
-                })
-                .unwrap_or_else(|| {
-                    if self.fit == Some(PdfFit::Width) {
-                        // Start a tall page at its top when entering/navigating
-                        // the PDF; explicit text/SyncTeX targets still win.
-                        Pos2::new(
-                            rect.center().x,
-                            rect.top()
-                                + (rect.height() / 2.).min((area.height() / 2. - 12.).max(0.)),
-                        )
-                    } else {
-                        rect.center()
-                    }
-                });
-            offset = point.to_vec2() - area.size() / 2.;
+            if let Some((_, y)) = target.filter(|(p, _)| *p == page)
+                && self.fit != Some(PdfFit::Page)
+            {
+                // A link destination goes to the top, with a little context above.
+                let scale = rect.width() / self.sizes[page].0.max(1.);
+                offset.y = rect.top() + y * scale - 24.;
+            } else {
+                let point = self
+                    .highlight
+                    .as_ref()
+                    .filter(|h| h.page == page + 1 && self.fit != Some(PdfFit::Page))
+                    .map(|h| {
+                        rect.min + Vec2::new(h.x, h.y) * (rect.width() / self.sizes[page].0.max(1.))
+                    })
+                    .unwrap_or_else(|| {
+                        if self.fit == Some(PdfFit::Width) {
+                            // Start a tall page at its top when entering/navigating
+                            // the PDF; explicit text/SyncTeX targets still win.
+                            Pos2::new(
+                                rect.center().x,
+                                rect.top()
+                                    + (rect.height() / 2.).min((area.height() / 2. - 12.).max(0.)),
+                            )
+                        } else {
+                            rect.center()
+                        }
+                    });
+                offset = point.to_vec2() - area.size() / 2.;
+            }
         }
         offset = offset.clamp(Vec2::ZERO, (self.layout.size - area.size()).max(Vec2::ZERO));
         let mut go_requested = false;
@@ -870,12 +948,29 @@ impl Preview {
                         }
                         go_requested = self.go_target().is_some();
                     }
+                    let link = |pos: Option<Pos2>| {
+                        let (x, y) = transform.to_page(pos?.x, pos?.y)?;
+                        let links = self.links.get(page).map_or(&[][..], Vec::as_slice);
+                        folio_core::pdf::link_at(links, x, y).cloned()
+                    };
+                    if !navigation_pointer
+                        && !response.dragged()
+                        && response.hovered()
+                        && link(response.hover_pos()).is_some()
+                    {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                    }
                     if response.clicked_by(egui::PointerButton::Primary)
                         && !navigation_pointer
                         && let Some(pos) = response.interact_pointer_pos()
                         && let Some((x, y)) = transform.to_page(pos.x, pos.y)
                     {
-                        self.select_point(page, x, y);
+                        if let Some(link) = link(Some(pos)) {
+                            let from = self.view_top(viewport);
+                            self.follow(ui.ctx(), &link.target, from);
+                        } else {
+                            self.select_point(page, x, y);
+                        }
                     }
                 }
                 if let Some(page) = dominant_page(&visible_pages, ui.clip_rect()) {
@@ -1396,6 +1491,91 @@ mod tests {
         let (page, x, y) = preview.go_target().unwrap();
         assert_eq!(page, 1);
         assert!((x - 116.).abs() < 0.001 && (y - 58.).abs() < 0.001);
+    }
+    #[test]
+    fn clicking_a_reference_shows_its_destination_and_back_returns() {
+        let (ctx, mut preview) = input_fixture();
+        let click = |ctx: &egui::Context, preview: &mut Preview, pos: Pos2| {
+            input_frame(ctx, preview, vec![egui::Event::PointerMoved(pos)]);
+            for pressed in [true, false] {
+                input_frame(
+                    ctx,
+                    preview,
+                    vec![egui::Event::PointerButton {
+                        pos,
+                        button: egui::PointerButton::Primary,
+                        pressed,
+                        modifiers: egui::Modifiers::NONE,
+                    }],
+                );
+            }
+            input_frame(ctx, preview, vec![]);
+        };
+        preview.links = vec![vec![]; 3];
+        preview.links[0].push(Link {
+            rect: folio_core::pdf::Rect {
+                x: 100.,
+                y: 100.,
+                width: 40.,
+                height: 12.,
+            },
+            // hyperref's anchor for a table on the second page, 100 pt from its top.
+            target: LinkTarget::Page {
+                page: 1,
+                y: Some(700.),
+            },
+        });
+        let rect = preview.page_rects[0];
+        let scale = rect.width() / 600.;
+        let before = rect.top();
+        // Beside the link, a click still selects text instead of navigating.
+        click(&ctx, &mut preview, rect.min + Vec2::new(300., 300.) * scale);
+        assert_eq!(preview.page, 1);
+        let rect = preview.page_rects[0];
+        click(&ctx, &mut preview, rect.min + Vec2::new(110., 106.) * scale);
+        assert_eq!(preview.page, 2);
+        let top = preview.canvas.top() + 24.;
+        let page = *preview
+            .page_rects
+            .iter()
+            .rev()
+            .find(|r| r.top() <= top && r.bottom() >= top)
+            .unwrap();
+        let shown = page.top() + 100. * scale - preview.canvas.top();
+        assert!((shown - 24.).abs() < 1., "destination at the top: {shown}");
+
+        assert!(preview.back());
+        input_frame(&ctx, &mut preview, vec![]);
+        assert_eq!(preview.page, 1);
+        assert!(
+            (preview.page_rects[0].top() - before).abs() < 1.,
+            "back restores the reading position: {} vs {before}",
+            preview.page_rects[0].top()
+        );
+        assert!(!preview.back(), "the history is spent");
+    }
+    #[test]
+    fn web_links_open_but_other_schemes_and_missing_pages_do_nothing() {
+        let (ctx, mut preview) = input_fixture();
+        for (target, opens) in [
+            (LinkTarget::Uri("https://doi.org/10.1/x".into()), true),
+            (LinkTarget::Uri("file:///etc/passwd".into()), false),
+            (LinkTarget::Uri("javascript:alert(1)".into()), false),
+            (LinkTarget::Page { page: 9, y: None }, false),
+        ] {
+            ctx.output_mut(|o| o.commands.clear());
+            preview.follow(&ctx, &target, (0, 0.));
+            let opened = ctx.output(|o| {
+                o.commands
+                    .iter()
+                    .any(|c| matches!(c, egui::OutputCommand::OpenUrl(_)))
+            });
+            assert_eq!(opened, opens, "{target:?}");
+        }
+        assert!(
+            !preview.back(),
+            "only followed in-document links are remembered"
+        );
     }
     #[test]
     fn trackpad_scroll_is_drawn_in_the_input_frame_without_an_added_tail() {

@@ -63,6 +63,7 @@ pub enum Action {
     SentenceNext,
     SentencePrevious,
     PdfFitPage,
+    PdfBack,
     Tab1,
     Tab2,
     Tab3,
@@ -74,7 +75,7 @@ pub enum Action {
     Tab9,
 }
 impl Action {
-    pub const ALL: [Self; 58] = [
+    pub const ALL: [Self; 59] = [
         Self::Save,
         Self::Recompile,
         Self::Find,
@@ -124,6 +125,7 @@ impl Action {
         Self::SentenceNext,
         Self::SentencePrevious,
         Self::PdfFitPage,
+        Self::PdfBack,
         Self::Tab1,
         Self::Tab2,
         Self::Tab3,
@@ -185,6 +187,7 @@ impl Action {
             Self::SentenceNext => "sentence_next",
             Self::SentencePrevious => "sentence_previous",
             Self::PdfFitPage => "pdf_fit_page",
+            Self::PdfBack => "pdf_back",
             Self::Tab1 => "tab_1",
             Self::Tab2 => "tab_2",
             Self::Tab3 => "tab_3",
@@ -209,6 +212,11 @@ impl Action {
     /// Zero-based position in the tab strip that this action jumps to.
     pub fn tab(self) -> Option<usize> {
         (self as usize).checked_sub(Self::Tab1 as usize)
+    }
+    /// Defaults added after settings files were in use; a chord the file
+    /// chose for another action takes precedence over them.
+    fn late_default(self) -> bool {
+        self.tab().is_some() || self == Self::PdfBack
     }
     pub fn is_pdf_fit(self) -> bool {
         matches!(self, Self::PdfFit | Self::PdfFitPage)
@@ -280,6 +288,7 @@ impl Action {
             Self::SentenceNext => "Move to sentence end",
             Self::SentencePrevious => "Move to sentence start",
             Self::PdfFitPage => "PDF: fit page",
+            Self::PdfBack => "PDF: back to link",
             Self::Tab1 => "Go to tab 1",
             Self::Tab2 => "Go to tab 2",
             Self::Tab3 => "Go to tab 3",
@@ -757,7 +766,11 @@ fn validate_conflicts(
         Action::FindNext | Action::FindPrevious => 4,
         Action::Dismiss => 4 | 8 | 16,
         Action::PdfFit | Action::PdfFitPage => 8,
-        Action::PdfZoomIn | Action::PdfZoomOut | Action::PdfNext | Action::PdfPrevious => 4 | 8,
+        Action::PdfZoomIn
+        | Action::PdfZoomOut
+        | Action::PdfNext
+        | Action::PdfPrevious
+        | Action::PdfBack => 4 | 8,
         _ => 31,
     };
     for (i, a) in Action::ALL.iter().copied().enumerate() {
@@ -775,10 +788,10 @@ fn validate_conflicts(
                 continue;
             };
             match (chosen[a as usize], chosen[b as usize]) {
-                (true, false) if b.tab().is_some() => {
+                (true, false) if b.late_default() => {
                     bindings[b as usize].retain(|y| !first.iter().any(|x| same(x, y)));
                 }
-                (false, true) if a.tab().is_some() => {
+                (false, true) if a.late_default() => {
                     bindings[a as usize].retain(|x| !second.iter().any(|y| same(x, y)));
                 }
                 _ => {

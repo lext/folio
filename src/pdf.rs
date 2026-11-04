@@ -200,3 +200,27 @@ impl CacheBudget {
         }
     }
 }
+/// Where a PDF link goes: a place in this document or an external address.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LinkTarget {
+    /// Zero-based page, and the destination's height above the page bottom
+    /// in PDF points when the link names one (hyperref anchors do).
+    Page {
+        page: usize,
+        y: Option<f32>,
+    },
+    Uri(String),
+}
+/// A clickable area of a page, in the same top-down points as glyphs.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Link {
+    pub rect: Rect,
+    pub target: LinkTarget,
+}
+/// The link under a page point; the smallest wins when areas overlap.
+pub fn link_at(links: &[Link], x: f32, y: f32) -> Option<&Link> {
+    links
+        .iter()
+        .filter(|link| link.rect.contains(x, y))
+        .min_by(|a, b| (a.rect.width * a.rect.height).total_cmp(&(b.rect.width * b.rect.height)))
+}

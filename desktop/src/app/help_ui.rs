@@ -45,6 +45,7 @@ const GROUPS: [(&str, &[Action]); 4] = [
             Action::PdfFitPage,
             Action::PdfNext,
             Action::PdfPrevious,
+            Action::PdfBack,
             Action::PdfZoomIn,
             Action::PdfZoomOut,
             Action::ShowLog,

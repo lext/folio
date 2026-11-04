@@ -80,6 +80,7 @@ Cmd/Ctrl+O to open one, or pass a project directory to `scripts/run.sh`.
 | Cmd/Ctrl+B | Toggle project browser |
 | Cmd/Ctrl+F | Search the current surface |
 | Cmd/Ctrl + double-click | Follow selected text between source and PDF |
+| Click a PDF link, then Cmd/Ctrl+[ | Go to a referenced table, figure or citation, then back |
 | Tab / Shift+Tab, then Enter | Cycle completion suggestions, then accept |
 | Cmd/Ctrl+D / Cmd/Ctrl+U | Paragraph end / start |
 | Cmd/Ctrl+J / Cmd/Ctrl+K | Sentence end / start |

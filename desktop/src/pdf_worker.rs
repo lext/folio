@@ -1,6 +1,6 @@
 use crate::render_queue::{Queue, Task};
 use eframe::egui;
-use folio_core::pdf::{Glyph, PageText, Rect};
+use folio_core::pdf::{Glyph, Link, LinkTarget, PageText, Rect};
 use pdfium_render::prelude::*;
 use std::{
     path::PathBuf,
@@ -28,6 +28,7 @@ pub enum Event {
         generation: u64,
         page: usize,
         text: PageText,
+        links: Vec<Link>,
     },
     Rendered {
         generation: u64,
@@ -101,6 +102,43 @@ pub fn index_page(page: &PdfPage<'_>) -> Result<PageText, PdfiumError> {
         height,
         glyphs,
     })
+}
+/// Internal (\ref, \cite, table of contents) and external links on a page.
+pub fn page_links(page: &PdfPage<'_>) -> Vec<Link> {
+    let height = page.height().value;
+    let destination = |dest: PdfDestination<'_>| {
+        let page = dest.page_index().ok()? as usize;
+        let y = match dest.view_settings().ok()? {
+            PdfDestinationViewSettings::SpecificCoordinatesAndZoom(_, y, _)
+            | PdfDestinationViewSettings::FitPageHorizontallyToWindow(y)
+            | PdfDestinationViewSettings::FitBoundsHorizontallyToWindow(y) => y.map(|y| y.value),
+            PdfDestinationViewSettings::FitPageToRectangle(rect) => Some(rect.top().value),
+            _ => None,
+        };
+        Some(LinkTarget::Page { page, y })
+    };
+    page.links()
+        .iter()
+        .filter_map(|link| {
+            let target = match link.action() {
+                Some(PdfAction::Uri(uri)) => uri.uri().ok().map(LinkTarget::Uri),
+                Some(PdfAction::LocalDestination(action)) => {
+                    action.destination().ok().and_then(destination)
+                }
+                _ => link.destination().and_then(destination),
+            }?;
+            let r = link.rect().ok()?;
+            Some(Link {
+                rect: Rect {
+                    x: r.left().value,
+                    y: height - r.top().value,
+                    width: r.width().value,
+                    height: r.height().value,
+                },
+                target,
+            })
+        })
+        .collect()
 }
 pub fn render_page(page: &PdfPage<'_>, width: i32) -> Result<egui::ColorImage, PdfiumError> {
     let bitmap = page.render_with_config(
@@ -243,6 +281,7 @@ impl Worker {
                                 generation: current,
                                 page: next_index,
                                 text,
+                                links: page_links(&page),
                             },
                             Err(e) => Event::Error {
                                 generation: current,
@@ -381,6 +420,25 @@ mod tests {
         .unwrap();
         assert_eq!(source.path.file_name().unwrap(), "main.tex");
         assert!((14..=17).contains(&source.line), "{}", source.line);
+        // `See Section~\ref{sec:start}` links back to the section heading.
+        let links = page_links(&page);
+        let reference = links
+            .iter()
+            .find(|link| {
+                matches!(
+                    link.target,
+                    LinkTarget::Page {
+                        page: 0,
+                        y: Some(_)
+                    }
+                )
+            })
+            .unwrap_or_else(|| panic!("{links:?}"));
+        assert!(reference.rect.is_valid());
+        assert!(
+            reference.rect.y > glyph.rect.y,
+            "the reference follows the heading"
+        );
         assert_eq!(doc.pages().len(), 2);
         let second = doc.pages().get(1).unwrap();
         let second_index = index_page(&second).unwrap();

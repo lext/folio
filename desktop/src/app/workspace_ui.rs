@@ -36,7 +36,8 @@ impl App {
             | Action::PdfFit
             | Action::PdfFitPage
             | Action::PdfNext
-            | Action::PdfPrevious => self.layers.layer == Layer::Preview,
+            | Action::PdfPrevious
+            | Action::PdfBack => self.layers.layer == Layer::Preview,
             _ => true,
         }
     }
@@ -142,6 +143,11 @@ impl App {
             | Action::PdfFitPage
             | Action::PdfNext
             | Action::PdfPrevious => self.preview.command(ctx, action),
+            Action::PdfBack => {
+                if !self.preview.back() {
+                    self.status = "No link to go back to".into();
+                }
+            }
             Action::UiZoomIn => {
                 ctx.set_zoom_factor(((ctx.zoom_factor() + 0.1) * 10.).round().min(50.) / 10.)
             }

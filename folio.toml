@@ -72,6 +72,8 @@ pdf_fit = ["Space"]
 pdf_fit_page = ["Space Space"]
 pdf_next_page = ["PageDown"]
 pdf_previous_page = ["PageUp"]
+# After following a link (\ref, \cite, contents), return to where you clicked.
+pdf_back = ["Primary+OpenBracket", "Alt+ArrowLeft"]
 
 [mouse]
 # Click / DoubleClick use the left button; RightClick / RightDoubleClick
