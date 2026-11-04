@@ -7,7 +7,9 @@ Write in one surface; switch to the PDF when you want to read. Folio saves and
 compiles changed sources in the background, then reuses the preview until the
 project changes again.
 
-- LaTeX, BibTeX, TOML and JSON highlighting, completion and matching brackets.
+- LaTeX, BibTeX, TOML and JSON highlighting and matching brackets.
+- Context-aware completion for commands, environments, labels, citations, files
+  and packages, from the project's own definitions and bibliography.
 - Searchable PDF preview with word selection and bidirectional SyncTeX navigation.
 - Git change markers against HEAD or a chosen commit, including unsaved edits.
 - Ordinary project files, a TOML build manifest, and verified flat LaTeX export.

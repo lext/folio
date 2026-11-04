@@ -97,9 +97,9 @@ fn completions_are_contextual_and_use_project_labels() {
     let label = completion::suggest("\\ref{sec:", 9, "\\label{sec:chapter}", &[]).unwrap();
     assert_eq!(label.items[0].insert, "sec:chapter");
     let env = completion::suggest("\\begin{ali", 10, "", &[]).unwrap();
-    assert!(env.items.iter().any(|i| i.insert == "align"));
+    assert!(env.items.iter().any(|i| i.label == "align"));
     let command = completion::suggest("\\sect", 5, "", &[]).unwrap();
-    assert!(command.items.iter().any(|i| i.insert == "\\section"));
+    assert!(command.items.iter().any(|i| i.label == "\\section"));
     assert!(completion::suggest("ordinary prose", 14, "", &[]).is_none());
     assert!(completion::suggest("% \\cite{", 8, "", &[]).is_none());
     assert!(completion::suggest("\\begin{verbatim}\n\\cite{", 23, "", &[]).is_none());

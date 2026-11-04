@@ -336,12 +336,41 @@ Source-to-PDF navigation retains the source selection and uses SyncTeX's region.
 Generated or ambiguous output falls back to a caret on the mapped source line;
 arbitrary TeX macro expansions cannot always be matched to a literal source word.
 
-Completion appears at the caret while typing commands, environments, references
-or citations. Tab/Down cycles forward, Shift+Tab/Up cycles backward, and Enter
-accepts. Citation suggestions
-index project `.bib` files and declared BibTeX/BibLaTeX resources, showing author,
-title and year. Unsaved open bibliography buffers are included. `latexmk` handles
-the actual bibliography compilation.
+Completion appears at the caret while typing a command or an argument. Tab/Down
+cycles forward, Shift+Tab/Up cycles backward, and Enter accepts. It knows what
+belongs where:
+
+- **Commands:** LaTeX and common package commands, your own `\newcommand`,
+  `\DeclareMathOperator` and `\NewDocumentCommand` macros, and every command the
+  project already uses. Commands from a package the project does not load appear
+  only when typed in full, marked with the `\usepackage` they need. Inside math,
+  math commands rank first. Accepting inserts empty mandatory arguments with the
+  caret in the first: `\frac` becomes `\frac{|}{}`.
+- **Environments:** after `\begin{`, accepting inserts the whole environment,
+  including its `\end` and a starting body (an `\item`, or a figure with
+  `\includegraphics`, caption and label). After `\end{`, the environment that is
+  still open comes first. Your `\newenvironment` and `\newtheorem` environments
+  are included.
+- **References:** every `\ref`, `\eqref`, `\cref`, `\autoref`, `\nameref` and
+  similar command offers the project's labels, each described by its figure or
+  table caption, equation or section, and line. `\eqref` ranks equations first.
+  `\label{` suggests a conventional key such as `fig:`, `eq:` or
+  `sec:related-work`.
+- **Citations:** every `\cite` variant (natbib and BibLaTeX included) searches keys,
+  authors, titles and years from project `.bib` files and declared resources,
+  including unsaved open bibliography buffers. Several words narrow the search
+  (`smith 2020`), accents are ignored (`muller` finds Müller), and keys already in
+  the citation are not offered again.
+- **Files and names:** `\input`, `\include`, `\includegraphics`, `\addbibresource`,
+  `\bibliography`, `\usepackage`, `\documentclass` and `\bibliographystyle` offer
+  matching project files, with or without the extension as each command expects,
+  plus known packages, classes and styles. Colours (including `\definecolor`
+  names), lengths, `\includegraphics` options, float placement and class options
+  complete too.
+
+Matching ignores case and accepts abbreviations: `\sbsec` finds `\subsection`
+and `results` finds `fig:results`. Exact prefixes rank first, then what the
+project uses most. `latexmk` handles the actual bibliography compilation.
 
 **Cmd/Ctrl+Shift+P**, or a right-click, opens the command palette. Search for project commands,
 Recompile, compiler output, Reload from disk, PDF controls or shortcut help. **Cmd/Ctrl+Shift+O** opens the section

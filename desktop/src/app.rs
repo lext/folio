@@ -141,6 +141,8 @@ pub struct App {
     export_mode: Bibliography,
     exporting: bool,
     files: Vec<PathBuf>,
+    /// Project files relative to the main file's folder, for path completion.
+    completion_files: Vec<String>,
     browser: crate::file_browser::Browser,
     disk_sources: HashMap<PathBuf, String>,
     disk_indexes: HashMap<PathBuf, Arc<completion::Index>>,
@@ -236,6 +238,7 @@ impl App {
             export_mode: Bibliography::Keep,
             exporting: false,
             files: vec![],
+            completion_files: vec![],
             browser: Default::default(),
             disk_sources: HashMap::new(),
             disk_indexes: HashMap::new(),
@@ -495,6 +498,19 @@ impl App {
             }
         }
         if let Some(directory) = self.root.as_ref().and_then(|r| r.parent()) {
+            self.completion_files = snapshot
+                .tree
+                .entries
+                .iter()
+                .filter(|e| e.kind != crate::file_browser::Kind::Directory)
+                .filter_map(|e| e.path.strip_prefix(directory).ok())
+                .map(|p| {
+                    p.components()
+                        .map(|c| c.as_os_str().to_string_lossy())
+                        .collect::<Vec<_>>()
+                        .join("/")
+                })
+                .collect();
             self.browser.replace(directory.to_owned(), snapshot.tree);
         }
         if self
@@ -905,13 +921,21 @@ impl App {
             .iter()
             .filter(|(p, _)| !self.tabs.iter().any(|t| &t.doc.path == *p))
             .map(|(_, index)| index.as_ref());
-        let indexes = disk.chain(self.tabs.iter().map(|t| t.index.as_ref()));
-        self.completion = completion::suggest_indexed(&tab.doc.text, cursor, &tab.index, indexes)
-            .map(|suggestions| Completion {
-                suggestions,
-                selected: 0,
-                anchor: self.caret,
-            });
+        let indexes: Vec<&completion::Index> = disk
+            .chain(self.tabs.iter().map(|t| t.index.as_ref()))
+            .collect();
+        self.completion = completion::suggest_in(
+            &tab.doc.text,
+            cursor,
+            &tab.index,
+            &indexes,
+            &self.completion_files,
+        )
+        .map(|suggestions| Completion {
+            suggestions,
+            selected: 0,
+            anchor: self.caret,
+        });
     }
     fn accept_completion(&mut self, index: usize) {
         if let Some(c) = self.completion.take()
@@ -925,11 +949,18 @@ impl App {
             {
                 tab.doc.text.replace_range(range.clone(), &item.insert);
                 tab.edited();
-                let cursor = tab.doc.text[..range.start + item.insert.len()]
-                    .chars()
-                    .count();
+                let caret = range.start + item.cursor.min(item.insert.len());
+                let cursor = tab.doc.text[..caret].chars().count();
                 tab.jump = Some(cursor..cursor);
+                tab.cursor = cursor;
+                tab.selection = cursor..cursor;
                 self.layers.edited();
+                // Accepting `\begin` or `\includegraphics` leaves the caret in an
+                // empty argument: offer what goes there straight away.
+                if self.settings.editor.auto_complete && tab.doc.text[..caret].ends_with(['{', '['])
+                {
+                    self.complete();
+                }
             }
         }
     }
@@ -1265,10 +1296,16 @@ impl App {
             return;
         };
         let mut accept = None;
-        let pos = egui::pos2(
-            c.anchor.x.min(ctx.content_rect().right() - 460.).max(8.),
-            c.anchor.y.min(ctx.content_rect().bottom() - 250.) + 5.,
-        );
+        // Rows are 44 points plus spacing; the list scrolls past 230.
+        let height = (c.suggestions.items.len() as f32 * 46.).min(230.) + 12.;
+        let bottom = ctx.content_rect().bottom();
+        // Near the bottom of the window, open above the caret line instead.
+        let y = if c.anchor.y + 5. + height > bottom {
+            (c.anchor.y - 28. - height).max(8.)
+        } else {
+            c.anchor.y + 5.
+        };
+        let pos = egui::pos2(c.anchor.x.min(ctx.content_rect().right() - 460.).max(8.), y);
         egui::Area::new("completion-menu".into())
             .order(egui::Order::Foreground)
             .fixed_pos(pos)
@@ -1280,14 +1317,8 @@ impl App {
                         .max_height(230.)
                         .show(ui, |ui| {
                             for (i, item) in c.suggestions.items.iter().enumerate() {
-                                let detail =
-                                    if ["Command", "Environment"].contains(&item.detail.as_str()) {
-                                        ""
-                                    } else {
-                                        &item.detail
-                                    };
                                 let response =
-                                    theme::row(ui, &item.insert, detail, "", i == c.selected);
+                                    theme::row(ui, &item.label, &item.detail, "", i == c.selected);
                                 if i == c.selected {
                                     response.scroll_to_me(None);
                                 }
@@ -2738,6 +2769,39 @@ mod tests {
         let items = &app.completion.as_ref().unwrap().suggestions.items;
         assert_eq!(items.len(), 1);
         assert!(items[0].detail.contains("Unsaved"));
+        fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn accepting_a_command_places_the_caret_and_chains_into_project_files() {
+        let dir =
+            std::env::temp_dir().join(format!("folio completion chain {}", std::process::id()));
+        ManagedProject::create(&dir, "Test paper", Engine::PdfLatex).unwrap();
+        fs::write(dir.join("main.tex"), "\\inp").unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        settle(&mut app, &ctx, |a| !a.scanning);
+        app.tabs[0].cursor = 4;
+        app.complete();
+        let pick = |app: &App, label: &str| {
+            let items = &app
+                .completion
+                .as_ref()
+                .expect("suggestions")
+                .suggestions
+                .items;
+            items
+                .iter()
+                .position(|i| i.label == label)
+                .unwrap_or_else(|| panic!("{label} not offered"))
+        };
+        app.accept_completion(pick(&app, "\\input"));
+        assert_eq!(app.tabs[0].doc.text, "\\input{}");
+        assert_eq!(app.tabs[0].cursor, 7, "the caret goes inside the braces");
+        // The scaffold's section file is offered straight away, without its extension.
+        app.accept_completion(pick(&app, "sections/introduction"));
+        assert_eq!(app.tabs[0].doc.text, "\\input{sections/introduction}");
+        assert!(app.completion.is_none());
+        drop(app);
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]

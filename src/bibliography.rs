@@ -78,8 +78,98 @@ fn value(s: &str, i: &mut usize, close: u8, strings: &HashMap<String, String>) -
     }
     result
 }
+/// TeX accent commands and special letters as Unicode, so `M{\"u}ller`
+/// displays and searches as `Müller`.
+fn decode_accents(s: &str) -> String {
+    const ACCENTED: &[(char, &str, &str)] = &[
+        ('"', "aeiouyAEIOU", "äëïöüÿÄËÏÖÜ"),
+        ('\'', "aeiouycnszAEIOUYCNSZ", "áéíóúýćńśźÁÉÍÓÚÝĆŃŚŹ"),
+        ('`', "aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
+        ('^', "aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
+        ('~', "anoANO", "ãñõÃÑÕ"),
+        ('=', "aeiouAEIOU", "āēīōūĀĒĪŌŪ"),
+        ('.', "zZI", "żŻİ"),
+        ('v', "cszrenCSZRENdt", "čšžřěňČŠŽŘĚŇďť"),
+        ('c', "csCS", "çşÇŞ"),
+        ('H', "ouOU", "őűŐŰ"),
+        ('r', "auAU", "åůÅŮ"),
+        ('k', "aeAE", "ąęĄĘ"),
+        ('u', "agAG", "ăğĂĞ"),
+    ];
+    const LETTERS: &[(&str, &str)] = &[
+        ("ss", "ß"),
+        ("ae", "æ"),
+        ("AE", "Æ"),
+        ("oe", "œ"),
+        ("OE", "Œ"),
+        ("aa", "å"),
+        ("AA", "Å"),
+        ("o", "ø"),
+        ("O", "Ø"),
+        ("l", "ł"),
+        ("L", "Ł"),
+        ("i", "ı"),
+        ("j", "ȷ"),
+    ];
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] != '\\' || i + 1 >= chars.len() {
+            out.push(chars[i]);
+            i += 1;
+            continue;
+        }
+        let accent = chars[i + 1];
+        if let Some((_, bases, marked)) = ACCENTED.iter().find(|(a, ..)| *a == accent) {
+            // The accented letter: `\"u`, `\"{u}`, `\v c`, `\'{\i}`.
+            let mut j = i + 2;
+            if accent.is_alphabetic() {
+                if chars.get(j) == Some(&' ') {
+                    j += 1;
+                } else if chars.get(j) != Some(&'{') {
+                    out.push('\\');
+                    i += 1;
+                    continue;
+                }
+            }
+            let braced = chars.get(j) == Some(&'{');
+            if braced {
+                j += 1;
+            }
+            if chars.get(j) == Some(&'\\') && matches!(chars.get(j + 1), Some('i' | 'j')) {
+                j += 1;
+            }
+            if let Some(&letter) = chars.get(j)
+                && let Some(n) = bases.chars().position(|b| b == letter)
+                && (!braced || chars.get(j + 1) == Some(&'}'))
+            {
+                out.push(marked.chars().nth(n).unwrap());
+                i = j + 1 + usize::from(braced);
+                continue;
+            }
+        } else {
+            let name: String = chars[i + 1..]
+                .iter()
+                .take_while(|c| c.is_ascii_alphabetic())
+                .collect();
+            if let Some((_, letter)) = LETTERS.iter().find(|(n, _)| *n == name) {
+                out.push_str(letter);
+                i += 1 + name.len();
+                if chars.get(i) == Some(&' ') {
+                    i += 1;
+                }
+                continue;
+            }
+        }
+        out.push('\\');
+        i += 1;
+    }
+    out
+}
 fn display(s: &str) -> String {
-    s.replace(['{', '}'], "")
+    decode_accents(s)
+        .replace(['{', '}'], "")
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
