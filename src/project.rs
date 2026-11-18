@@ -6,6 +6,7 @@ use std::{
     time::Duration,
 };
 use toml_edit::DocumentMut;
+mod template;
 pub const MANIFEST: &str = "folio.project.toml";
 #[derive(Clone, Debug)]
 pub struct Manifest {
@@ -97,6 +98,7 @@ impl Project {
         Manifest::parse(&manifest)?;
         fs::create_dir(directory)?;
         let created = (|| {
+            // The required folders exist even if the template leaves one empty.
             for subdir in ["sections", "figures", "tables"] {
                 fs::create_dir(directory.join(subdir))?;
             }
@@ -104,31 +106,13 @@ impl Project {
                 fs::write(directory.join(subdir).join(".gitkeep"), "")?;
             }
             fs::write(directory.join(MANIFEST), manifest)?;
-            fs::write(
-                directory.join("main.tex"),
-                "\\documentclass{article}\n\\usepackage[T1]{fontenc}\n\\usepackage{graphicx}\n\\begin{document}\n\\input{sections/introduction}\n\\bibliographystyle{plain}\n\\bibliography{references}\n\\end{document}\n",
-            )?;
-            fs::write(
-                directory.join("sections/introduction.tex"),
-                "\\section{Introduction}\nStart writing here.\n",
-            )?;
-            // Standalone supplementary material; main.tex does not include it.
-            fs::write(
-                directory.join("supplement.tex"),
-                "\\documentclass{article}\n\\usepackage[T1]{fontenc}\n\\usepackage{graphicx}\n\\begin{document}\n\\section*{Supplementary material}\nAdd supplementary methods, figures and tables here.\n\\end{document}\n",
-            )?;
-            fs::write(
-                directory.join("references.bib"),
-                "% Add BibTeX or BibLaTeX entries here.\n",
-            )?;
-            fs::write(
-                directory.join(".gitignore"),
-                ".folio/\n/main.pdf\n/supplement.pdf\n.DS_Store\n",
-            )?;
-            fs::write(
-                directory.join("README.md"),
-                "# LaTeX project\n\nBuild settings are in folio.project.toml.\nWrite sections in sections/, figures in figures/, and table sources in tables/.\nsupplement.tex is a separate document for supplementary material.\nKeep bibliography entries in references.bib or bibliography/.\nOptional styles/ and data/ hold local packages and supporting data.\nBuilds write main.pdf and supplement.pdf beside their sources; .folio/ holds working files. Do not edit either.\n\nBuild: folio-cli build .\nValidate: folio-cli project check .\nExport: folio-cli project export . ../submission\n",
-            )?;
+            for (path, contents) in template::FILES {
+                let path = directory.join(path);
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                fs::write(path, contents)?;
+            }
             Self::load(directory)
         })();
         if created.is_err() {

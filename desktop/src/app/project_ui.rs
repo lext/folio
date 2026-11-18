@@ -818,21 +818,21 @@ mod tests {
         let ctx = egui::Context::default();
         let mut app = App::with_context(ctx.clone(), Some(a.directory.clone()));
         assert!(app.add_project_file("table.tex").is_err());
-        app.add_project_file("tables/results.tex").unwrap();
+        app.add_project_file("tables/scores.tex").unwrap();
         assert_eq!(
             app.tabs[app.active].doc.path,
-            a.directory.join("tables/results.tex")
+            a.directory.join("tables/scores.tex")
         );
-        assert!(app.add_project_file("tables/results.tex").is_err());
+        assert!(app.add_project_file("tables/scores.tex").is_err());
         app.tabs[app.active].doc.text = "unsaved table".into();
         // A newer file would simply win; a deleted one still refuses the save.
-        fs::remove_file(a.directory.join("tables/results.tex")).unwrap();
+        fs::remove_file(a.directory.join("tables/scores.tex")).unwrap();
         app.open(b.directory.clone());
         app.finish_project_switch(true);
         assert_eq!(app.root, Some(a.directory.join("main.tex")));
         assert!(app.pending_project.is_some());
         assert_eq!(app.tabs[app.active].doc.text, "unsaved table");
-        assert!(!a.directory.join("tables/results.tex").exists());
+        assert!(!a.directory.join("tables/scores.tex").exists());
         app.finish_project_switch(false);
         assert_eq!(app.root, Some(b.directory.join("main.tex")));
         super::super::tests::settle(&mut app, &ctx, |a| !a.scanning);
@@ -853,9 +853,9 @@ mod tests {
         let mut app = App::with_context(ctx.clone(), Some(p.directory.clone()));
         app.open_document(p.directory.join("sections/introduction.tex"));
         app.tabs[app.active].doc.text =
-            "\\section{Methods}\nSaved buffer content.\\cite{knuth}\n\\input{tables/results}\n"
+            "\\section{Methods}\nSaved buffer content.\\cite{knuth}\n\\input{tables/scores}\n"
                 .into();
-        p.write_new(std::path::Path::new("tables/results.tex"), b"Result: 42.")
+        p.write_new(std::path::Path::new("tables/scores.tex"), b"Result: 42.")
             .unwrap();
         let pdfium = bind().unwrap();
         for mode in [Bibliography::Keep, Bibliography::Inline] {
@@ -881,7 +881,8 @@ mod tests {
                 "Saved buffer content",
                 "Result: 42",
                 "The TeXbook",
-                "Donald Knuth",
+                // The template's naturemag style abbreviates first names.
+                "Knuth",
             ] {
                 assert!(text.contains(expected), "Missing {expected}: {text}");
             }

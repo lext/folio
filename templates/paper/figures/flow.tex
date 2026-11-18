@@ -1,0 +1,10 @@
+% A TikZ figure kept as source; a script can regenerate it.
+\begin{tikzpicture}[font=\footnotesize, node distance=6mm,
+  box/.style={draw, rounded corners=1pt, align=center, text width=6cm, inner sep=4pt},
+  arr/.style={-{Latex[length=2mm]}}]
+\node[box] (all) {Enrolled\\\textit{n}\,=\,1,000 participants};
+\node[box, below=of all] (elig) {Eligible\\\textit{n}\,=\,800 participants};
+\node[box, below=of elig, fill=gray!10] (final) {Analysed\\\textit{n}\,=\,750 participants};
+\draw[arr] (all) -- (elig);
+\draw[arr] (elig) -- (final);
+\end{tikzpicture}

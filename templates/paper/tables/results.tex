@@ -1,0 +1,17 @@
+\begin{table}[htbp]
+\centering
+\footnotesize
+\caption{Main results. Estimates with 95\% confidence intervals (CI).
+\textbf{Bold}: \textit{p}\textsubscript{adj}\,<\,0.05.}
+\label{tab:results}
+% Shrinks the table to the column width only when it is wider.
+\resizebox{\ifdim\width>\columnwidth \columnwidth\else\width\fi}{!}{%
+\begin{tabular}{lcc}
+\toprule
+\textbf{Method} & \textbf{Estimate (95\% CI)} & \textbf{Adjusted p} \\
+\midrule
+Proposed & \textbf{0.62 (0.60--0.63)} & <0.001 \\
+Baseline & 0.33 (0.32--0.34) & -- \\
+\bottomrule
+\end{tabular}}
+\end{table}

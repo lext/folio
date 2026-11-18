@@ -115,11 +115,14 @@ fn supplement_is_an_optional_standalone_root_document() {
     let p = Project::create(&f.0, "Paper", Engine::PdfLatex).unwrap();
     let supplement = fs::read_to_string(f.0.join("supplement.tex")).unwrap();
     assert!(supplement.contains("\\documentclass") && supplement.contains("\\end{document}"));
+    let main = fs::read_to_string(f.0.join("main.tex")).unwrap();
     assert!(
-        !fs::read_to_string(f.0.join("main.tex"))
-            .unwrap()
-            .contains("supplement"),
+        !main.contains("\\input{supplement") && !main.contains("\\include{supplement"),
         "the supplement is its own document"
+    );
+    assert!(
+        main.contains("\\externaldocument[S-]{supplement}"),
+        "the paper reads the supplement's labels"
     );
     assert!(
         p.files()

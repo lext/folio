@@ -127,6 +127,10 @@ mod tests {
     fn sections_are_tabs_reached_by_click_or_by_the_surface_keys() {
         let dir = std::env::temp_dir().join(format!("folio-tabs-{}", std::process::id()));
         Project::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+        // Only the two sections this main.tex inputs.
+        for section in ["results", "discussion", "declarations"] {
+            fs::remove_file(dir.join(format!("sections/{section}.tex"))).unwrap();
+        }
         fs::write(dir.join("sections/methods.tex"), "\\section{Methods}\n").unwrap();
         fs::write(
             dir.join("main.tex"),
@@ -315,6 +319,10 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("folio-tabs-many-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         Project::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+        // The template's introduction stays, as a section main.tex does not input.
+        for section in ["results", "discussion", "methods", "declarations"] {
+            fs::remove_file(dir.join(format!("sections/{section}.tex"))).unwrap();
+        }
         let mut main = String::from("\\documentclass{article}\n\\begin{document}\n");
         for i in 0..40 {
             fs::write(dir.join(format!("sections/part{i:02}.tex")), "text\n").unwrap();

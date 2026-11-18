@@ -29,18 +29,30 @@ An unmatched bracket gets a muted red outline. Matching respects strings,
 comments and LaTeX verbatim content, and also handles `\(…\)` and `\[…\]`.
 Highlights stay out of the way while selecting text.
 
-New projects use a fixed layout of ordinary, Git-friendly files:
+New projects use a fixed layout of ordinary, Git-friendly files, and start from
+a complete paper template with placeholder text:
 
 ```text
 paper/
   folio.project.toml
-  main.tex
-  supplement.tex
+  main.tex                 two-column paper, sections input in order
+  supplement.tex           Supplementary Information, numbered S1, S2, …
   references.bib
-  sections/introduction.tex
-  figures/
-  tables/
+  sections/                introduction, results, discussion, methods, declarations
+  figures/example.pdf      a figure included by name
+  figures/flow.tex         a TikZ figure kept as source
+  tables/results.tex       one file per table
+  tables/supplementary_details.tex
 ```
+
+The template is set up for submission: the paper and supplement cross-reference
+each other (`Supplementary \cref{S-tab:...}` in the paper, `\cref{M-fig:...}` in
+the supplement), so a [flat export without the supplement](#flat-export) writes
+those references out as text. Text and math use Helvetica with pdfLaTeX and its TeX
+Gyre Heros clone with XeLaTeX or LuaLaTeX, citations are numbered superscripts
+(`naturemag`), and `\tbd{...}` marks missing information in red. Replace the
+placeholders, or delete what a paper does not need. The template's source is
+[templates/paper](../templates/paper/), which also opens as a project.
 
 Keep chapter/section sources in `sections/`, figure assets in `figures/`, and table
 sources in `tables/`. Optional `bibliography/`, `styles/`, and `data/` hold extra

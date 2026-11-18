@@ -14,6 +14,7 @@ fn structured_project_and_flat_exports_build_with_both_bibliography_modes() {
     let base = std::env::temp_dir().join(format!("folio-structured-export-{}", std::process::id()));
     fs::create_dir_all(&base).unwrap();
     let p = Project::create(&base.join("paper"), "Export paper", Engine::PdfLatex).unwrap();
+    minimal_paper(&p);
     let starter = compile(&p.build_config().unwrap(), Arc::new(AtomicBool::new(false))).unwrap();
     assert!(starter.success, "{}", starter.log);
     // Dotted stems, graphicspath, duplicate basenames and a local BibTeX style
@@ -166,6 +167,7 @@ fn flat_biblatex_exports_rebuild_with_retained_or_embedded_bibliography() {
     let base = std::env::temp_dir().join(format!("folio-biblatex-export-{}", std::process::id()));
     fs::create_dir_all(&base).unwrap();
     let p = Project::create(&base.join("paper"), "BibLaTeX paper", Engine::PdfLatex).unwrap();
+    minimal_paper(&p);
     fs::write(p.directory.join("main.tex"), "\\documentclass{article}\n\\usepackage[backend=biber]{biblatex}\n\\addbibresource{references.bib}\n\\begin{document}\nA citation~\\cite{knuth}.\n\\printbibliography\n\\end{document}\n").unwrap();
     fs::write(p.directory.join("references.bib"), "@book{knuth,author={Donald Knuth},title={The TeXbook},year={1984},publisher={Addison-Wesley}}\n").unwrap();
     for mode in [Bibliography::Keep, Bibliography::Inline] {
@@ -453,6 +455,7 @@ fn journal_archive(engine: Engine, program: &str) {
     let _ = fs::remove_dir_all(&base);
     fs::create_dir_all(&base).unwrap();
     let p = Project::create(&base.join("paper"), "Journal paper", engine).unwrap();
+    minimal_paper(&p);
     let starter = compile(&p.build_config().unwrap(), Arc::new(AtomicBool::new(false))).unwrap();
     assert!(starter.success, "{}", starter.log);
     fs::copy(
@@ -572,5 +575,161 @@ fn journal_archive(engine: Engine, program: &str) {
         .is_err()
     );
     assert!(!base.join("unsupported.zip").exists() && !base.join("unsupported.pdf").exists());
+    fs::remove_dir_all(base).unwrap();
+}
+
+/// The one-section paper the export tests patch, in place of the template.
+fn minimal_paper(project: &folio_core::project::Project) {
+    fs::write(
+        project.directory.join("main.tex"),
+        "\\documentclass{article}\n\\usepackage[T1]{fontenc}\n\\usepackage{graphicx}\n\\begin{document}\n\\input{sections/introduction}\n\\bibliographystyle{plain}\n\\bibliography{references}\n\\end{document}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.directory.join("sections/introduction.tex"),
+        "\\section{Introduction}\nStart writing here.\n",
+    )
+    .unwrap();
+    fs::write(
+        project.directory.join("supplement.tex"),
+        "\\documentclass{article}\n\\begin{document}\nSupplement.\n\\end{document}\n",
+    )
+    .unwrap();
+    fs::write(project.directory.join("references.bib"), "").unwrap();
+}
+
+#[test]
+#[ignore = "requires latexmk, pdfLaTeX, XeLaTeX, BibTeX, latexpand and unzip"]
+fn the_new_project_template_builds_and_exports_for_a_journal() {
+    template_paper(Engine::PdfLatex, "pdflatex");
+    template_paper(Engine::XeLatex, "xelatex");
+}
+fn template_paper(engine: Engine, program: &str) {
+    use folio_core::{
+        export::{self, Bibliography, Options},
+        project::Project,
+    };
+    let base =
+        std::env::temp_dir().join(format!("folio-template-{program}-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+    let p = Project::create(&base.join("paper"), "Template paper", engine).unwrap();
+    // Folio's build: the paper, then the supplement; the paper's references
+    // into the supplement settle on the next build.
+    for _ in 0..2 {
+        for config in p.build_configs().unwrap() {
+            let built = compile(&config, Arc::new(AtomicBool::new(false))).unwrap();
+            assert!(built.success, "{}", built.log);
+        }
+    }
+    for document in ["main", "supplement"] {
+        let log = fs::read_to_string(p.directory.join(format!(".folio/{document}.log"))).unwrap();
+        assert!(!log.contains("undefined"), "{document}: {log}");
+        assert!(
+            !log.contains("Empty `thebibliography'"),
+            "{document}: {log}"
+        );
+    }
+    // The journal archive: the paper alone, its supplementary references
+    // written out, compiled by the engine alone from the shipped .bbl.
+    let options = Options {
+        bibliography: Bibliography::Keep,
+        supplement: false,
+    };
+    let archive = base.join("journal.zip");
+    let result = export::flat(&p, &archive, options, Arc::new(AtomicBool::new(false))).unwrap();
+    assert_eq!(result.pdfs.len(), 2, "the paper and the supplement PDFs");
+    let unpacked = base.join("unpacked");
+    let unzip = std::process::Command::new("unzip")
+        .arg("-q")
+        .arg(&archive)
+        .arg("-d")
+        .arg(&unpacked)
+        .status()
+        .unwrap();
+    assert!(unzip.success());
+    let mut names: Vec<String> = fs::read_dir(&unpacked)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    assert_eq!(
+        names,
+        [
+            "BUILD.txt",
+            "example.pdf",
+            "main.bbl",
+            "main.tex",
+            "references.bib"
+        ],
+        "the supplement's sources stay out"
+    );
+    let flat = fs::read_to_string(unpacked.join("main.tex")).unwrap();
+    // The template's comments explain S-... labels; the TeX must not use them.
+    let code: String = flat
+        .lines()
+        .map(|line| line.split('%').next().unwrap())
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        !code.contains("{S-") && !code.contains("\\externaldocument") && !code.contains("xr-hyper"),
+        "{flat}"
+    );
+    for _ in 0..2 {
+        let journal = std::process::Command::new(executable(program))
+            .args(["-interaction=nonstopmode", "main.tex"])
+            .current_dir(&unpacked)
+            .output()
+            .unwrap();
+        assert!(
+            journal.status.success(),
+            "{}",
+            String::from_utf8_lossy(&journal.stdout)
+        );
+    }
+    let log = fs::read_to_string(unpacked.join("main.log")).unwrap();
+    assert!(!log.contains("undefined"), "{log}");
+    // pdftotext is optional on the test machine; the text is checked when present.
+    if let Ok(out) = std::process::Command::new("pdftotext")
+        .arg(unpacked.join("main.pdf"))
+        .arg("-")
+        .output()
+    {
+        let text = String::from_utf8_lossy(&out.stdout).replace('\n', " ");
+        for item in [
+            "Supplementary Table S1",
+            "Supplementary Figure S1",
+            "Supplementary Note 1",
+        ] {
+            assert!(text.contains(item), "{item}: {text}");
+        }
+    }
+    // With the supplement: both documents, flattened side by side.
+    let folder = base.join("submission");
+    export::flat(
+        &p,
+        &folder,
+        Bibliography::Keep,
+        Arc::new(AtomicBool::new(false)),
+    )
+    .unwrap();
+    for name in [
+        "main.tex",
+        "supplement.tex",
+        "main.bbl",
+        "supplement.bbl",
+        "example.pdf",
+    ] {
+        assert!(folder.join(name).is_file(), "{name}");
+    }
+    let supplement = fs::read_to_string(folder.join("supplement.tex")).unwrap();
+    assert!(
+        supplement.contains("\\begin{tikzpicture}"),
+        "the flow figure is inlined"
+    );
+    assert!(
+        supplement.contains("\\externaldocument[M-]{main}"),
+        "{supplement}"
+    );
     fs::remove_dir_all(base).unwrap();
 }
