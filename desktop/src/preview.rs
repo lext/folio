@@ -23,8 +23,12 @@ pub struct Preview {
     layout: crate::page_layout::Layout,
     requested: u64,
     generation: u64,
+    /// The first PDF shown: the paper.
     pub path: Option<PathBuf>,
     next_path: Option<PathBuf>,
+    /// Every PDF shown, in page order, with its first (zero-based) page: the
+    /// paper, then the supplement when the project has one.
+    parts: Vec<(PathBuf, usize)>,
     sizes: Vec<(f32, f32)>,
     texts: Vec<Option<PageText>>,
     links: Vec<Vec<Link>>,
@@ -106,6 +110,7 @@ impl Preview {
             generation: 0,
             path: None,
             next_path: None,
+            parts: vec![],
             sizes: vec![],
             texts: vec![],
             links: vec![],
@@ -236,6 +241,7 @@ impl Preview {
         self.generation = self.requested;
         self.path = None;
         self.next_path = None;
+        self.parts.clear();
         self.sizes.clear();
         self.layout.clear();
         self.texts.clear();
@@ -271,6 +277,33 @@ impl Preview {
             ));
         }
         self.clicked_point
+    }
+    /// Send the preview's worker requests to the test instead of PDFium.
+    #[cfg(test)]
+    pub fn capture_requests(&mut self) -> std::sync::mpsc::Receiver<Request> {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let (_, events) = std::sync::mpsc::channel();
+        self.worker = pdf_worker::Worker { tx, rx: events };
+        rx
+    }
+    #[cfg(test)]
+    pub fn requested(&self) -> u64 {
+        self.requested
+    }
+    /// The PDFs shown, in page order, with their first (zero-based) page.
+    pub fn parts(&self) -> &[(PathBuf, usize)] {
+        &self.parts
+    }
+    /// The PDF showing a one-based page of the combined view, and that page's
+    /// one-based number in its own PDF, as SyncTeX counts it.
+    pub fn locate(&self, page: usize) -> Option<(PathBuf, usize)> {
+        let index = page.checked_sub(1)?;
+        let part = self
+            .parts
+            .partition_point(|(_, first)| *first <= index)
+            .checked_sub(1)?;
+        let (path, first) = &self.parts[part];
+        Some((path.clone(), index - first + 1))
     }
     pub fn go_word(&self) -> Option<WordAnchor> {
         let (page, a, b) = self.selection?;
@@ -311,16 +344,20 @@ impl Preview {
         self.layout.clear();
         self.page = 1;
     }
-    pub fn load(&mut self, path: PathBuf) {
+    /// Show several PDFs as one document, one after the other.
+    pub fn load_parts(&mut self, paths: Vec<PathBuf>) {
+        let Some(first) = paths.first().cloned() else {
+            return;
+        };
         self.fit_keys.reset();
         self.requested += 1;
-        self.next_path = Some(path.clone());
+        self.next_path = Some(first);
         self.error = None;
         if self
             .worker
             .tx
             .send(Request::Open {
-                path,
+                paths,
                 generation: self.requested,
             })
             .is_err()
@@ -421,9 +458,25 @@ impl Preview {
     pub fn poll(&mut self, ctx: &egui::Context) {
         while let Ok(event) = self.worker.rx.try_recv() {
             match event {
-                Event::Opened { generation, sizes } if generation == self.requested => {
+                Event::Opened {
+                    generation,
+                    sizes,
+                    parts,
+                } if generation == self.requested => {
                     self.generation = generation;
                     self.path = self.next_path.take();
+                    self.parts = if parts.is_empty() {
+                        self.path.iter().map(|p| (p.clone(), 0)).collect()
+                    } else {
+                        let mut first = 0;
+                        parts
+                            .into_iter()
+                            .map(|(path, pages)| {
+                                first += pages;
+                                (path, first - pages)
+                            })
+                            .collect()
+                    };
                     self.texts = vec![None; sizes.len()];
                     self.links = vec![vec![]; sizes.len()];
                     // A rebuilt PDF keeps its pages but not their link positions.
@@ -1136,6 +1189,44 @@ mod tests {
     }
 
     #[test]
+    fn combined_pages_map_back_to_the_paper_or_the_supplement() {
+        let ctx = egui::Context::default();
+        let mut preview = Preview::new(ctx.clone());
+        let (requests, sent) = std::sync::mpsc::channel();
+        let (tx, events) = std::sync::mpsc::channel();
+        preview.worker = pdf_worker::Worker {
+            tx: requests,
+            rx: events,
+        };
+        preview.load_parts(vec!["main.pdf".into(), "supplement.pdf".into()]);
+        assert!(matches!(
+            sent.try_recv().unwrap(),
+            Request::Open { paths, .. } if paths.len() == 2
+        ));
+        tx.send(Event::Opened {
+            generation: preview.requested,
+            sizes: vec![(600., 800.); 5],
+            parts: vec![("main.pdf".into(), 2), ("supplement.pdf".into(), 3)],
+        })
+        .unwrap();
+        preview.poll(&ctx);
+        assert_eq!(
+            preview.path.as_deref(),
+            Some(std::path::Path::new("main.pdf"))
+        );
+        assert_eq!(
+            preview.parts(),
+            [("main.pdf".into(), 0), ("supplement.pdf".into(), 2)]
+        );
+        // One-based pages, as SyncTeX counts them.
+        assert_eq!(preview.locate(1), Some(("main.pdf".into(), 1)));
+        assert_eq!(preview.locate(2), Some(("main.pdf".into(), 2)));
+        assert_eq!(preview.locate(3), Some(("supplement.pdf".into(), 1)));
+        assert_eq!(preview.locate(5), Some(("supplement.pdf".into(), 3)));
+        assert_eq!(preview.locate(0), None);
+    }
+
+    #[test]
     fn page_fit_survives_delayed_loading_mixed_sizes_and_synctex_jumps() {
         let ctx = egui::Context::default();
         let mut preview = Preview::with_settings(
@@ -1154,6 +1245,7 @@ mod tests {
         input_frame(&ctx, &mut preview, vec![]);
         assert!(preview.page_rects.is_empty());
         tx.send(Event::Opened {
+            parts: vec![],
             generation: 1,
             sizes: vec![(600., 800.), (1000., 600.), (420., 1200.)],
         })
@@ -1182,6 +1274,7 @@ mod tests {
         preview.requested = 2;
         preview.next_path = Some("rebuilt.pdf".into());
         tx.send(Event::Opened {
+            parts: vec![],
             generation: 2,
             sizes: vec![(1200., 500.)],
         })
@@ -1353,6 +1446,7 @@ mod tests {
         preview.requested = 1;
         preview.next_path = Some("shorter.pdf".into());
         tx.send(Event::Opened {
+            parts: vec![],
             generation: 1,
             sizes: vec![(600., 800.); 5],
         })
@@ -1362,6 +1456,7 @@ mod tests {
         assert!(preview.page <= 5);
         assert!(!preview.page_rects.is_empty());
         tx.send(Event::Opened {
+            parts: vec![],
             generation: 1,
             sizes: vec![],
         })
@@ -1796,6 +1891,7 @@ mod tests {
         );
         preview.requested = 1;
         tx.send(Event::Opened {
+            parts: vec![],
             generation: 1,
             sizes: vec![(600., 800.); 2],
         })
@@ -1858,7 +1954,9 @@ mod tests {
     fn invalid_pdf_finishes_loading_with_an_error() {
         let ctx = egui::Context::default();
         let mut preview = Preview::new(ctx.clone());
-        preview.load(std::env::temp_dir().join("folio-nonexistent-input.pdf"));
+        preview.load_parts(vec![
+            std::env::temp_dir().join("folio-nonexistent-input.pdf"),
+        ]);
         let start = std::time::Instant::now();
         while preview.error.is_none() && start.elapsed().as_secs() < 5 {
             preview.poll(&ctx);

@@ -31,7 +31,7 @@ use project_ui::ProjectPopup;
 use std::{
     collections::HashMap,
     fs,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc,
         atomic::{AtomicBool, Ordering},
@@ -154,6 +154,14 @@ pub struct App {
     preview_pending: bool,
     /// What the paper's build reported; the supplement's outcome joins it.
     paper_status: String,
+    /// The supplement PDF shown after the paper (a build's preview copy), and
+    /// the size and modification time of the supplement's working PDF then, so
+    /// a rebuild that leaves it unchanged does not reload the preview.
+    shown_supplement: Option<(PathBuf, Option<(u64, std::time::SystemTime)>)>,
+    /// The paper PDF last sent to the preview. The supplement's build can
+    /// finish before the preview has opened it, so this, not the preview's
+    /// open file, is what the supplement joins.
+    shown_main: Option<PathBuf>,
     recovery: crate::recovery::Recovery,
     project_stamp: Option<u64>,
     /// Key of the applied snapshot; an identical periodic scan is skipped.
@@ -251,6 +259,8 @@ impl App {
             ctx: ctx.clone(),
             preview_pending: false,
             paper_status: String::new(),
+            shown_supplement: None,
+            shown_main: None,
             recovery: Default::default(),
             project_stamp: None,
             scan_key: None,
@@ -683,6 +693,15 @@ impl App {
             ctx.request_repaint();
         }));
     }
+    /// Show the paper, followed by its supplement when there is one.
+    fn show_pdfs(&mut self, main: PathBuf, supplement: Option<PathBuf>) {
+        self.shown_main = Some(main.clone());
+        self.shown_supplement = supplement
+            .as_ref()
+            .map(|pdf| (pdf.clone(), working_stamp(pdf)));
+        self.preview
+            .load_parts(std::iter::once(main).chain(supplement).collect());
+    }
     fn go(&mut self, ctx: &egui::Context) {
         if self.layers.layer == Layer::Source {
             self.enter_preview(ctx, true);
@@ -692,7 +711,8 @@ impl App {
             self.status = format!("Select PDF text, then {}", self.settings.go_hint());
             return;
         };
-        let Some(pdf) = self.preview.path.clone() else {
+        // The page in the PDF that shows it: the paper's, or the supplement's.
+        let Some((pdf, page)) = self.preview.locate(page) else {
             return;
         };
         let word = self.preview.go_word();
@@ -796,7 +816,20 @@ impl App {
                                         .unwrap_or(published);
                                     self.status.push_str(&format!(" · {}", shown.display()));
                                 }
-                                self.preview.load(result.pdf);
+                                // The supplement follows the paper in the preview. The one
+                                // already shown stays until its own build replaces it, so
+                                // the page count does not drop and return.
+                                let supplement = self
+                                    .shown_supplement
+                                    .as_ref()
+                                    .map(|(pdf, _)| pdf.clone())
+                                    .filter(|_| {
+                                        self.managed.as_ref().is_some_and(|p| {
+                                            p.directory.join("supplement.tex").is_file()
+                                        })
+                                    })
+                                    .filter(|pdf| pdf.is_file());
+                                self.show_pdfs(result.pdf, supplement);
                             } else {
                                 self.status = if result.cancelled {
                                     "Typesetting cancelled"
@@ -824,8 +857,25 @@ impl App {
                     let paper_status = std::mem::take(&mut self.paper_status);
                     let mut suffix = String::new();
                     let failure = match result {
-                        None => None,
+                        None => {
+                            // No supplement document (any more): show the paper alone.
+                            if paper
+                                && self.shown_supplement.is_some()
+                                && let Some(main) = self.shown_main.clone()
+                            {
+                                self.show_pdfs(main, None);
+                            }
+                            None
+                        }
                         Some(Ok(result)) if result.success => {
+                            if paper
+                                && let Some(main) = self.shown_main.clone()
+                                && self.shown_supplement.as_ref().is_none_or(|(shown, stamp)| {
+                                    !shown.is_file() || *stamp != working_stamp(&result.pdf)
+                                })
+                            {
+                                self.show_pdfs(main, Some(result.pdf.clone()));
+                            }
                             if let Some(published) = &result.published {
                                 let name = published.file_name().unwrap_or_default();
                                 suffix.push_str(&if paper {
@@ -893,14 +943,15 @@ impl App {
             && !self.preview.is_loading()
             && self.layers.layer == Layer::Preview
             && let Some((token, source, line, column)) = self.pending_go.take()
-            && let Some(pdf) = self.preview.path.clone()
+            && !self.preview.parts().is_empty()
         {
+            let parts = self.preview.parts().to_vec();
             let tx = self.tx.clone();
             let ctx = ctx.clone();
             thread::spawn(move || {
                 let _ = tx.send(Event::Destination(
                     token,
-                    synctex::forward(&pdf, &source, line, column).map_err(|e| e.to_string()),
+                    forward_in_parts(&parts, &source, line, column),
                 ));
                 ctx.request_repaint();
             });
@@ -1643,6 +1694,43 @@ impl Drop for App {
     }
 }
 
+/// Size and modification time of the working PDF behind a build's preview
+/// copy (`.folio/preview-N/supplement.pdf` → `.folio/supplement.pdf`). Every
+/// build makes a new copy; the working PDF only changes when TeX reran.
+fn working_stamp(copy: &Path) -> Option<(u64, std::time::SystemTime)> {
+    let working = copy.parent()?.parent()?.join(copy.file_name()?);
+    let meta = fs::metadata(working).ok()?;
+    Some((meta.len(), meta.modified().ok()?))
+}
+/// Forward search in the combined preview: the first PDF whose SyncTeX map
+/// places the source line, with its pages shifted to where that PDF starts.
+/// The paper is asked first, so a file both documents input opens in it.
+fn forward_in_parts(
+    parts: &[(PathBuf, usize)],
+    source: &Path,
+    line: usize,
+    column: usize,
+) -> Result<Vec<PdfLocation>, String> {
+    let mut failure = None;
+    for (pdf, first) in parts {
+        match synctex::forward(pdf, source, line, column) {
+            Ok(locations) if !locations.is_empty() => {
+                return Ok(locations
+                    .into_iter()
+                    .map(|mut location| {
+                        location.page += first;
+                        location
+                    })
+                    .collect());
+            }
+            Ok(_) => {}
+            Err(e) => {
+                failure.get_or_insert(e.to_string());
+            }
+        }
+    }
+    failure.map_or(Ok(vec![]), Err)
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3073,6 +3161,54 @@ mod tests {
         fs::remove_dir_all(dir).unwrap();
     }
     #[test]
+    fn the_supplement_joins_the_new_paper_even_before_the_preview_opens_it() {
+        let dir = std::env::temp_dir().join(format!("folio-joined-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        ManagedProject::create(&dir, "Paper", Engine::PdfLatex).unwrap();
+        let ctx = egui::Context::default();
+        let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+        let requests = app.preview.capture_requests();
+        let result = |path: PathBuf| BuildResult {
+            success: true,
+            cancelled: false,
+            pdf: path,
+            published: None,
+            log: String::new(),
+            diagnostics: vec![],
+            elapsed: Duration::from_millis(10),
+        };
+        let opened = |requests: &std::sync::mpsc::Receiver<crate::pdf_worker::Request>| {
+            requests
+                .try_iter()
+                .filter_map(|r| match r {
+                    crate::pdf_worker::Request::Open { paths, .. } => Some(paths),
+                    _ => None,
+                })
+                .last()
+        };
+        for build in 1..=2 {
+            let main = dir.join(format!(".folio/preview-{build}/main.pdf"));
+            let supplement = dir.join(format!(".folio/preview-{build}/supplement.pdf"));
+            // Both builds finish before the PDF worker has opened anything.
+            app.building = true;
+            app.tx.send(Event::Build(Ok(result(main.clone())))).unwrap();
+            app.tx
+                .send(Event::Supplement(
+                    Some(Ok(result(supplement.clone()))),
+                    true,
+                ))
+                .unwrap();
+            app.poll(&ctx);
+            assert_eq!(
+                opened(&requests),
+                Some(vec![main, supplement]),
+                "build {build}: this build's paper, then its supplement"
+            );
+        }
+        drop(app);
+        let _ = fs::remove_dir_all(dir);
+    }
+    #[test]
     fn the_supplement_builds_after_the_paper_and_reports_without_hiding_it() {
         let dir = std::env::temp_dir().join(format!("folio-supplement-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
@@ -3264,6 +3400,103 @@ mod tests {
                     "{engine:?} should select occurrence {occurrence} of {word}, not the sentence"
                 );
             }
+            settle(&mut app, &ctx, |a| !a.scanning);
+            drop(app);
+            fs::remove_dir_all(dir).unwrap();
+        }
+    }
+
+    #[test]
+    #[ignore = "requires TeX, SyncTeX and PDFium"]
+    fn real_preview_shows_the_supplement_after_the_paper_and_navigates_both() {
+        for engine in [Engine::PdfLatex, Engine::XeLatex] {
+            let dir = std::env::temp_dir()
+                .join(format!("folio combined {engine:?} {}", std::process::id()));
+            let _ = fs::remove_dir_all(&dir);
+            ManagedProject::create(&dir, "Test paper", engine).unwrap();
+            fs::write(
+                dir.join("main.tex"),
+                "\\documentclass{article}\n\\begin{document}\nPaper body text.\n\\end{document}\n",
+            )
+            .unwrap();
+            let supplement = dir.join("supplement.tex");
+            fs::write(
+                &supplement,
+                "\\documentclass{article}\n\\begin{document}\nSupplementary opening.\n\\newpage\nSecond supplementary page.\n\\end{document}\n",
+            )
+            .unwrap();
+            let ctx = egui::Context::default();
+            let mut app = App::with_context(ctx.clone(), Some(dir.clone()));
+            settle(&mut app, &ctx, |a| !a.scanning);
+            app.enter_preview(&ctx, false);
+            settle(&mut app, &ctx, |a| {
+                !a.building && !a.preview.is_loading() && a.preview.parts().len() == 2
+            });
+            let canonical = dir.canonicalize().unwrap();
+            let (supplement_pdf, first) = app.preview.parts()[1].clone();
+            assert_eq!(first, 1, "{engine:?}: the paper has one page");
+            assert!(
+                supplement_pdf.starts_with(canonical.join(".folio"))
+                    && supplement_pdf.ends_with("supplement.pdf"),
+                "{supplement_pdf:?}"
+            );
+            assert_eq!(app.preview.locate(3), Some((supplement_pdf.clone(), 2)));
+
+            // PDF to source: a word on the supplement's first page, which is
+            // the second page of the combined preview.
+            let pdfium = crate::pdf_worker::bind().unwrap();
+            let pdf = pdfium.load_pdf_from_file(&supplement_pdf, None).unwrap();
+            let text = crate::pdf_worker::index_page(&pdf.pages().get(0).unwrap()).unwrap();
+            let range = text.find("opening")[0].clone();
+            let rect = text.glyphs[range.start + 1].rect;
+            settle(&mut app, &ctx, |a| a.preview.indexed >= 2);
+            app.preview
+                .select_point(1, rect.x + rect.width / 2., rect.y + rect.height / 2.);
+            app.go(&ctx);
+            settle(&mut app, &ctx, |a| a.layers.layer == Layer::Source);
+            let tab = &app.tabs[app.active];
+            assert_eq!(
+                tab.doc.path,
+                supplement.canonicalize().unwrap(),
+                "{engine:?}"
+            );
+
+            // Source to PDF: the supplement's second page is the third shown.
+            let tab = &mut app.tabs[app.active];
+            tab.selection = document::line_char_range(&tab.doc.text, 5);
+            tab.jump = Some(tab.selection.clone());
+            app.go(&ctx);
+            settle(&mut app, &ctx, |a| {
+                a.preview.navigation_highlight().is_some()
+            });
+            assert_eq!(
+                app.preview.navigation_highlight().unwrap().page,
+                3,
+                "{engine:?}"
+            );
+
+            // A rebuild keeps the supplement in view throughout, and an
+            // unchanged supplement is not reloaded.
+            app.layers.edited();
+            app.enter_preview(&ctx, false);
+            settle(&mut app, &ctx, |a| a.building);
+            let reloads = app.preview.requested();
+            settle(&mut app, &ctx, |a| !a.building && !a.preview.is_loading());
+            assert_eq!(app.preview.parts().len(), 2, "{engine:?}");
+            assert!(
+                app.preview.requested() <= reloads + 1,
+                "{engine:?}: only the paper is reloaded"
+            );
+
+            // Without a supplement document the paper is shown alone again:
+            // supplement.tex is now a fragment, not a document of its own.
+            app.open_document(supplement.clone());
+            app.tabs[app.active].doc.text = "A fragment for the paper to input.\n".into();
+            app.layers.edited();
+            app.enter_preview(&ctx, false);
+            settle(&mut app, &ctx, |a| {
+                !a.building && !a.preview.is_loading() && a.preview.parts().len() == 1
+            });
             settle(&mut app, &ctx, |a| !a.scanning);
             drop(app);
             fs::remove_dir_all(dir).unwrap();

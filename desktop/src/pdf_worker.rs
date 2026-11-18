@@ -9,8 +9,17 @@ use std::{
 };
 
 pub enum Request {
-    Open { path: PathBuf, generation: u64 },
-    Viewport { generation: u64, tasks: Vec<Task> },
+    /// Show these PDFs as one document, one after the other: the paper, then
+    /// its supplement. Only the first is required; a later one that cannot be
+    /// read is left out rather than hiding the paper.
+    Open {
+        paths: Vec<PathBuf>,
+        generation: u64,
+    },
+    Viewport {
+        generation: u64,
+        tasks: Vec<Task>,
+    },
 }
 #[derive(Clone, Copy, Debug)]
 pub enum Operation {
@@ -23,6 +32,8 @@ pub enum Event {
     Opened {
         generation: u64,
         sizes: Vec<(f32, f32)>,
+        /// Each opened PDF and its page count, in page order.
+        parts: Vec<(PathBuf, usize)>,
     },
     Indexed {
         generation: u64,
@@ -140,6 +151,28 @@ pub fn page_links(page: &PdfPage<'_>) -> Vec<Link> {
         })
         .collect()
 }
+/// The part showing a page of the combined document, and its own page index.
+fn locate<'d, 'a>(
+    documents: &'d [PdfDocument<'a>],
+    starts: &[usize],
+    page: usize,
+) -> Option<(&'d PdfDocument<'a>, usize)> {
+    let part = starts
+        .partition_point(|&start| start <= page)
+        .checked_sub(1)?;
+    let local = page - starts[part];
+    let doc = documents.get(part)?;
+    (local < doc.pages().len() as usize).then_some((doc, local))
+}
+/// A part's internal links point into that part: shift them by its first page.
+fn offset_links(mut links: Vec<Link>, first: usize) -> Vec<Link> {
+    for link in &mut links {
+        if let LinkTarget::Page { page, .. } = &mut link.target {
+            *page += first;
+        }
+    }
+    links
+}
 pub fn render_page(page: &PdfPage<'_>, width: i32) -> Result<egui::ColorImage, PdfiumError> {
     let bitmap = page.render_with_config(
         &PdfRenderConfig::new()
@@ -170,7 +203,15 @@ impl Worker {
                     return;
                 }
             };
-            let mut document: Option<PdfDocument<'_>> = None;
+            // The parts of the shown document and the first page of each.
+            let mut documents: Vec<PdfDocument<'_>> = Vec::new();
+            let mut starts: Vec<usize> = Vec::new();
+            let total = |documents: &[PdfDocument<'_>]| {
+                documents
+                    .iter()
+                    .map(|d| d.pages().len() as usize)
+                    .sum::<usize>()
+            };
             let mut current = 0;
             let mut next_index = 0;
             let mut queue = Queue::default();
@@ -184,58 +225,85 @@ impl Worker {
                         break;
                     };
                     match request {
-                        Request::Open { path, generation } => {
-                            let opened =
-                                std::fs::read(path)
+                        Request::Open { paths, generation } => {
+                            let mut opened = Vec::new();
+                            let mut failure = None;
+                            for (i, path) in paths.iter().enumerate() {
+                                let doc = std::fs::read(path)
                                     .map_err(|e| e.to_string())
                                     .and_then(|bytes| {
                                         pdfium
                                             .load_pdf_from_byte_vec(bytes, None)
                                             .map_err(|e| e.to_string())
-                                    });
-                            match opened {
-                                Ok(doc) => {
-                                    let sizes: Vec<_> = doc
-                                        .pages()
-                                        .iter()
-                                        .map(|p| (p.width().value, p.height().value))
-                                        .collect();
-                                    if sizes.iter().any(|&(w, h)| {
-                                        !w.is_finite() || !h.is_finite() || w <= 0. || h <= 0.
-                                    }) {
-                                        if events
-                                            .send(Event::Error {
-                                                generation,
-                                                operation: Operation::Open,
-                                                message: "PDF contains an invalid page size".into(),
-                                            })
-                                            .is_err()
-                                        {
-                                            return;
+                                    })
+                                    .and_then(|doc| {
+                                        let sizes: Vec<_> = doc
+                                            .pages()
+                                            .iter()
+                                            .map(|p| (p.width().value, p.height().value))
+                                            .collect();
+                                        if sizes.iter().any(|&(w, h)| {
+                                            !w.is_finite() || !h.is_finite() || w <= 0. || h <= 0.
+                                        }) {
+                                            Err("PDF contains an invalid page size".to_owned())
+                                        } else {
+                                            Ok((doc, sizes))
                                         }
-                                        ctx.request_repaint();
-                                        continue;
+                                    });
+                                match doc {
+                                    Ok(doc) => opened.push((path.clone(), doc)),
+                                    Err(message) if i == 0 => {
+                                        failure = Some(message);
+                                        break;
                                     }
-                                    document = Some(doc);
-                                    current = generation;
-                                    next_index = 0;
-                                    queue.replace(vec![]);
-                                    if events.send(Event::Opened { generation, sizes }).is_err() {
-                                        return;
-                                    }
+                                    // The paper stands without its supplement.
+                                    Err(_) => {}
                                 }
-                                Err(message) => {
-                                    if events
-                                        .send(Event::Error {
-                                            generation,
-                                            operation: Operation::Open,
-                                            message,
-                                        })
-                                        .is_err()
-                                    {
-                                        return;
-                                    }
+                            }
+                            if let Some(message) = failure
+                                .or_else(|| opened.is_empty().then(|| "No PDF to open".to_owned()))
+                            {
+                                if events
+                                    .send(Event::Error {
+                                        generation,
+                                        operation: Operation::Open,
+                                        message,
+                                    })
+                                    .is_err()
+                                {
+                                    return;
                                 }
+                                ctx.request_repaint();
+                                continue;
+                            }
+                            let mut sizes = Vec::new();
+                            let mut parts = Vec::new();
+                            documents = Vec::new();
+                            for (path, (doc, part_sizes)) in opened {
+                                parts.push((path, part_sizes.len()));
+                                sizes.extend(part_sizes);
+                                documents.push(doc);
+                            }
+                            starts = parts
+                                .iter()
+                                .scan(0, |start, (_, pages)| {
+                                    let first = *start;
+                                    *start += pages;
+                                    Some(first)
+                                })
+                                .collect();
+                            current = generation;
+                            next_index = 0;
+                            queue.replace(vec![]);
+                            if events
+                                .send(Event::Opened {
+                                    generation,
+                                    sizes,
+                                    parts,
+                                })
+                                .is_err()
+                            {
+                                return;
                             }
                         }
                         Request::Viewport { generation, tasks } if generation == current => {
@@ -246,11 +314,11 @@ impl Worker {
                     ctx.request_repaint();
                 }
                 if let Some(task) = queue.next()
-                    && let Some(doc) = &document
+                    && let Some((doc, local)) = locate(&documents, &starts, task.page)
                 {
                     let rendered = doc
                         .pages()
-                        .get(task.page as i32)
+                        .get(local as i32)
                         .and_then(|page| render_page(&page, task.width));
                     let event = match rendered {
                         Ok(image) => Event::Rendered {
@@ -272,16 +340,17 @@ impl Worker {
                     continue;
                 }
                 // Background indexing only runs after visible rendering work.
-                if let Some(doc) = &document
-                    && next_index < doc.pages().len() as usize
-                {
-                    if let Ok(page) = doc.pages().get(next_index as i32) {
+                if next_index < total(&documents) {
+                    if let Some((doc, local)) = locate(&documents, &starts, next_index)
+                        && let Ok(page) = doc.pages().get(local as i32)
+                    {
+                        let first = next_index - local;
                         let event = match index_page(&page) {
                             Ok(text) => Event::Indexed {
                                 generation: current,
                                 page: next_index,
                                 text,
-                                links: page_links(&page),
+                                links: offset_links(page_links(&page), first),
                             },
                             Err(e) => Event::Error {
                                 generation: current,
@@ -310,6 +379,36 @@ impl Worker {
 mod tests {
     use super::*;
     #[test]
+    fn a_later_parts_internal_links_are_shifted_to_where_it_starts() {
+        let link = |target| Link {
+            rect: Rect {
+                x: 0.,
+                y: 0.,
+                width: 1.,
+                height: 1.,
+            },
+            target,
+        };
+        let links = offset_links(
+            vec![
+                link(LinkTarget::Page {
+                    page: 1,
+                    y: Some(5.),
+                }),
+                link(LinkTarget::Uri("https://example.org".into())),
+            ],
+            3,
+        );
+        assert!(matches!(
+            links[0].target,
+            LinkTarget::Page {
+                page: 4,
+                y: Some(5.)
+            }
+        ));
+        assert!(matches!(&links[1].target, LinkTarget::Uri(u) if u == "https://example.org"));
+    }
+    #[test]
     #[ignore = "requires PDFium"]
     fn repeated_binding_reuses_the_initialized_pdfium_library() {
         let first = bind().unwrap();
@@ -324,7 +423,7 @@ mod tests {
         worker
             .tx
             .send(Request::Open {
-                path: std::env::var("FOLIO_TEST_PDF").unwrap().into(),
+                paths: vec![std::env::var("FOLIO_TEST_PDF").unwrap().into()],
                 generation: 1,
             })
             .unwrap();
@@ -344,7 +443,7 @@ mod tests {
         worker
             .tx
             .send(Request::Open {
-                path: "/does-not-exist/folio.pdf".into(),
+                paths: vec!["/does-not-exist/folio.pdf".into()],
                 generation: 2,
             })
             .unwrap();

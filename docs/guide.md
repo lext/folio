@@ -52,8 +52,11 @@ retains the layout. Each build typesets `main.tex` and then, when it exists,
 `supplement.tex`, and writes their PDFs to `main.pdf` and
 `supplement.pdf` beside them. Each is replaced in one step so a PDF viewer never reads
 a partial file, and a failed build leaves the last good one. The preview shows
-the paper as soon as it is done; a supplement that fails is reported with its
-log without hiding it. LaTeX's working files stay in `.folio/`. New projects
+the paper as soon as it is done, followed by the supplement's pages, so both read
+as one document. Click-to-source and source-to-PDF navigation, search and links
+work across both parts. The supplement already shown stays in place while the
+paper rebuilds, and is replaced only when its own build changes it. A supplement
+that fails is reported with its log without hiding the paper. LaTeX's working files stay in `.folio/`. New projects
 list both folders in `.gitignore`.
 
 **Add project file** (Cmd/Ctrl+Shift+N with the default settings) creates a file by relative
