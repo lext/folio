@@ -174,20 +174,33 @@ impl App {
         };
         let parent = p.directory.parent().unwrap_or(Path::new(".")).to_owned();
         let name = format!(
-            "{}-export",
+            "{}-export{}",
             p.directory
                 .file_name()
                 .unwrap_or_default()
-                .to_string_lossy()
+                .to_string_lossy(),
+            if self.export_zip { ".zip" } else { "" }
         );
+        let (title, zip) = if self.export_zip {
+            ("Export to a new .zip archive", true)
+        } else {
+            ("Export to a new folder", false)
+        };
         self.project_busy = true;
         let (tx, ctx) = (self.tx.clone(), ctx.clone());
         thread::spawn(move || {
             let path = rfd::FileDialog::new()
-                .set_title("Export to a new folder")
+                .set_title(title)
                 .set_directory(parent)
                 .set_file_name(name)
-                .save_file();
+                .save_file()
+                // The archive is chosen here, not by the name typed in the dialog.
+                .map(|path| match (zip, path.extension()) {
+                    (true, Some(e)) if e.eq_ignore_ascii_case("zip") => path,
+                    (true, _) => path.with_extension("zip"),
+                    (false, Some(e)) if e.eq_ignore_ascii_case("zip") => path.with_extension(""),
+                    (false, _) => path,
+                });
             let _ = tx.send(Event::ExportDestination(path));
             ctx.request_repaint();
         });
@@ -202,14 +215,13 @@ impl App {
         self.exporting = true;
         self.cancel = Arc::new(AtomicBool::new(false));
         self.status = "Exporting and checking compilation…".into();
-        let (tx, ctx, mode, cancel) = (
-            self.tx.clone(),
-            ctx.clone(),
-            self.export_mode,
-            self.cancel.clone(),
-        );
+        let options = export::Options {
+            bibliography: self.export_mode,
+            supplement: self.export_supplement,
+        };
+        let (tx, ctx, cancel) = (self.tx.clone(), ctx.clone(), self.cancel.clone());
         self.build_thread = Some(thread::spawn(move || {
-            let result = export::flat(&project, &path, mode, cancel).map_err(|e| e.to_string());
+            let result = export::flat(&project, &path, options, cancel).map_err(|e| e.to_string());
             let _ = tx.send(Event::Exported(result));
             ctx.request_repaint();
         }));
@@ -217,7 +229,31 @@ impl App {
     pub(super) fn export_finished(&mut self, result: Result<export::ExportResult, String>) {
         self.exporting = false;
         match result {
-            Ok(result) => self.project_message("Export complete", format!("{}\n\n{} files · main.tex and main.pdf\nCompilation checked. Build instructions are in BUILD.txt.", result.directory.display(), result.files)),
+            Ok(result) => {
+                let pdfs = result
+                    .pdfs
+                    .iter()
+                    .map(|p| {
+                        if p.starts_with(&result.path) {
+                            p.file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into_owned()
+                        } else {
+                            p.display().to_string()
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" · ");
+                self.project_message(
+                    "Export complete",
+                    format!(
+                        "{}\n\n{} files · {pdfs}\nCompilation checked. Build instructions are in BUILD.txt.",
+                        result.path.display(),
+                        result.files
+                    ),
+                )
+            }
             Err(e) => self.project_message("Export stopped", e),
         }
     }
@@ -311,7 +347,7 @@ impl App {
                     ui.radio_value(
                         &mut self.export_mode,
                         Bibliography::Keep,
-                        "Keep bibliography files (.bib)",
+                        "Ship compiled .bbl, keep .bib files",
                     );
                     ui.radio_value(
                         &mut self.export_mode,
@@ -319,9 +355,29 @@ impl App {
                         "Embed compiled bibliography in main.tex",
                     );
                     ui.add_space(8.);
+                    if self
+                        .managed
+                        .as_ref()
+                        .is_some_and(|p| p.directory.join("supplement.tex").is_file())
+                    {
+                        ui.checkbox(&mut self.export_supplement, "Include supplement.tex");
+                        if !self.export_supplement {
+                            ui.weak("References to the supplement (xr's \\externaldocument) are written out as text; supplement.pdf is still exported, from the same build.");
+                        }
+                    }
+                    ui.checkbox(&mut self.export_zip, "Package as a .zip for journal upload");
+                    if self.export_zip {
+                        ui.weak("The verified PDF is saved beside the archive.");
+                    }
+                    ui.add_space(8.);
                     ui.weak("Saves your files, builds a copy, then checks the exported project.");
                     ui.horizontal(|ui| {
-                        if ui.button("Choose folder…").clicked() {
+                        let choose = if self.export_zip {
+                            "Choose archive…"
+                        } else {
+                            "Choose folder…"
+                        };
+                        if ui.button(choose).clicked() {
                             self.export_dialog(ctx);
                             close = true;
                         }

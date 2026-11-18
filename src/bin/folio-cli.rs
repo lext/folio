@@ -1,6 +1,6 @@
 use folio_core::{
     build::{self, Engine},
-    export::{self, Bibliography},
+    export::{self, Bibliography, Options},
     project::Project,
     synctex,
 };
@@ -11,7 +11,7 @@ use std::{
 };
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let usage = "Folio local LaTeX tools\n\n  folio-cli doctor\n  folio-cli project new DIRECTORY [pdf|xe|lua]\n  folio-cli project check PROJECT\n  folio-cli project export PROJECT DESTINATION [--bibliography bibtex|inline]\n  folio-cli build PROJECT\n  folio-cli forward FILE.pdf SOURCE.tex LINE\n  folio-cli inverse FILE.pdf PAGE X Y\n\nDesktop: cargo run --manifest-path desktop/Cargo.toml -- PROJECT";
+    let usage = "Folio local LaTeX tools\n\n  folio-cli doctor\n  folio-cli project new DIRECTORY [pdf|xe|lua]\n  folio-cli project check PROJECT\n  folio-cli project export PROJECT DESTINATION[.zip] [--bibliography bibtex|inline] [--without-supplement]\n  folio-cli build PROJECT\n  folio-cli forward FILE.pdf SOURCE.tex LINE\n  folio-cli inverse FILE.pdf PAGE X Y\n\nDesktop: cargo run --manifest-path desktop/Cargo.toml -- PROJECT";
     match args.first().map(String::as_str) {
         None | Some("--help" | "-h") => println!("{usage}"),
         Some("doctor") if args.len() == 1 => {
@@ -111,30 +111,48 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                     project.manifest.engine.label()
                 );
             }
-            Some("export")
-                if args.len() == 4 || (args.len() == 6 && args[4] == "--bibliography") =>
-            {
+            Some("export") if args.len() >= 4 => {
                 let project = required_project(Path::new(&args[2]))?;
-                let bibliography = match args.get(5).map(String::as_str).unwrap_or("bibtex") {
-                    "bibtex" => Bibliography::Keep,
-                    "inline" => Bibliography::Inline,
-                    _ => {
-                        return Err(
-                            io::Error::other("Bibliography must be bibtex or inline").into()
-                        );
+                let mut options = Options::from(Bibliography::Keep);
+                let mut flags = args[4..].iter();
+                while let Some(flag) = flags.next() {
+                    match (flag.as_str(), flags.clone().next().map(String::as_str)) {
+                        ("--bibliography", Some("bibtex")) => {
+                            options.bibliography = Bibliography::Keep;
+                            flags.next();
+                        }
+                        ("--bibliography", Some("inline")) => {
+                            options.bibliography = Bibliography::Inline;
+                            flags.next();
+                        }
+                        ("--bibliography", _) => {
+                            return Err(
+                                io::Error::other("Bibliography must be bibtex or inline").into()
+                            );
+                        }
+                        ("--without-supplement", _) => options.supplement = false,
+                        _ => {
+                            return Err(io::Error::other(format!(
+                                "Unknown export option {flag}.\n{usage}"
+                            ))
+                            .into());
+                        }
                     }
-                };
+                }
                 let result = export::flat(
                     &project,
                     Path::new(&args[3]),
-                    bibliography,
+                    options,
                     Arc::new(AtomicBool::new(false)),
                 )?;
                 println!(
                     "{} ({} files; compiled successfully)",
-                    result.directory.display(),
+                    result.path.display(),
                     result.files
                 );
+                for pdf in result.pdfs.iter().filter(|p| !p.starts_with(&result.path)) {
+                    println!("{}", pdf.display());
+                }
             }
             _ => return Err(io::Error::other(format!("Invalid project command.\n{usage}")).into()),
         },

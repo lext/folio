@@ -17,22 +17,52 @@ use std::{
     thread,
     time::{Duration, Instant},
 };
+mod references;
+mod zip;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bibliography {
     Keep,
     Inline,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Options {
+    pub bibliography: Bibliography,
+    /// Export a standalone supplement.tex beside the paper. Without it, the
+    /// paper's references into the supplement (xr's `\externaldocument`)
+    /// become the literal text they typeset, such as "Table S1".
+    pub supplement: bool,
+}
+impl From<Bibliography> for Options {
+    fn from(bibliography: Bibliography) -> Self {
+        Self {
+            bibliography,
+            supplement: true,
+        }
+    }
+}
 #[derive(Debug)]
 pub struct ExportResult {
-    pub directory: PathBuf,
+    /// The new folder, or the `.zip` archive when the destination named one.
+    pub path: PathBuf,
     pub files: usize,
+    /// Verified PDFs: inside the folder, or beside the archive.
+    pub pdfs: Vec<PathBuf>,
 }
+/// Export a flat, independently buildable copy of the project to a new
+/// folder, or to a ZIP archive when `destination` ends in `.zip`. An archive
+/// holds only what a journal compiles; the verified PDFs are written beside
+/// it as `<name>.pdf` and `<name>-supplement.pdf`. An omitted supplement is
+/// still published as a PDF, from the same build that numbered its references.
 pub fn flat(
     project: &Project,
     destination: &Path,
-    bibliography: Bibliography,
+    options: impl Into<Options>,
     cancel: Arc<AtomicBool>,
 ) -> io::Result<ExportResult> {
+    let Options {
+        bibliography,
+        supplement,
+    } = options.into();
     check_cancel(&cancel)?;
     let project = Project::load(&project.directory)?;
     let files = project.files()?;
@@ -54,6 +84,19 @@ pub fn flat(
             .file_name()
             .ok_or_else(|| error("Missing export folder name"))?,
     );
+    let archive = destination
+        .extension()
+        .is_some_and(|e| e.eq_ignore_ascii_case("zip"));
+    let beside = |root: &str| {
+        let stem = destination
+            .file_stem()
+            .unwrap_or_default()
+            .to_string_lossy();
+        match root {
+            "main" => parent.join(format!("{stem}.pdf")),
+            _ => parent.join(format!("{stem}-{root}.pdf")),
+        }
+    };
     static SERIAL: AtomicU64 = AtomicU64::new(0);
     let staging = parent.join(format!(
         ".folio-export-{}-{}",
@@ -83,15 +126,35 @@ pub fn flat(
         {
             return Err(error("Project changed while preparing export; retry"));
         }
-        // main.tex is the paper. An optional supplement.tex is a second,
-        // standalone document that is flattened and verified the same way.
-        let mut roots = vec!["main"];
-        if files.iter().any(|file| file == Path::new("supplement.tex")) {
-            roots.push("supplement");
-        }
+        // main.tex is the paper. A standalone supplement.tex is a second
+        // document, flattened and verified the same way unless it is omitted.
         let snapshot = Project::load(&source)?;
         let config = snapshot.build_config()?;
-        for root in &roots {
+        let documents: Vec<String> = snapshot
+            .build_configs()?
+            .iter()
+            .map(|c| c.root.file_stem().unwrap().to_string_lossy().into_owned())
+            .collect();
+        let documents: Vec<&str> = documents.iter().map(String::as_str).collect();
+        let omitted = !supplement && documents.contains(&"supplement");
+        let roots: Vec<&str> = if omitted {
+            vec!["main"]
+        } else {
+            documents.clone()
+        };
+        if archive {
+            for root in &documents {
+                if beside(root).try_exists()? {
+                    return Err(error(format!(
+                        "{} already exists; choose a new archive name",
+                        beside(root).display()
+                    )));
+                }
+            }
+        }
+        // The supplement builds first: a paper that imports its labels with
+        // xr then reads the current numbers.
+        for root in documents.iter().rev() {
             preflight(&source, root)?;
             let mut original = BuildConfig::new(source.join(format!("{root}.tex")), config.engine);
             original.timeout = config.timeout;
@@ -107,8 +170,13 @@ pub fn flat(
                 )));
             }
         }
+        let supplement_labels = if omitted {
+            Some(references::labels(&source.join(".folio/supplement.aux"))?)
+        } else {
+            None
+        };
         let resources = used_resources(&source, &files, &roots)?;
-        let names = resource_names(&resources, &roots);
+        let names = resource_names(&resources, &documents);
         let mut protected = vec![];
         for file in &files {
             if file.extension().is_some_and(|e| e == "tex") {
@@ -121,10 +189,24 @@ pub fn flat(
             for (key, value) in &protected {
                 flat = flat.replace(key, value);
             }
+            if let Some(labels) = &supplement_labels {
+                flat = references::resolve(&flat, labels)?;
+            }
             flat = rewrite_resources(&flat, &names)?;
             if bibliography == Bibliography::Inline {
                 flat =
                     inline_bibliography(&flat, &source.join(format!(".folio/{root}.bbl")), root)?;
+            }
+            // Journals typeset with the engine alone and never run BibTeX or
+            // Biber, so the compiled bibliography ships beside the .tex.
+            let bbl = source.join(format!(".folio/{root}.bbl"));
+            if bibliography == Bibliography::Keep && has_bibliography(&flat)? {
+                if !bbl.is_file() {
+                    return Err(error(format!(
+                        "{root}.tex has a bibliography but no compiled {root}.bbl; cite an entry and rebuild"
+                    )));
+                }
+                fs::copy(&bbl, output.join(format!("{root}.bbl")))?;
             }
             fs::write(output.join(format!("{root}.tex")), &flat)?;
         }
@@ -147,12 +229,13 @@ pub fn flat(
                 fs::copy(from, output.join(name))?;
             }
         }
-        for root in &roots {
+        for root in roots.iter().rev() {
             let mut verification =
                 BuildConfig::new(output.join(format!("{root}.tex")), config.engine);
             verification.timeout = config.timeout;
             verification.use_latexmkrc = false;
-            verification.run_bibliography = bibliography == Bibliography::Keep;
+            // As a journal builds it: the engine and the shipped .bbl only.
+            verification.run_bibliography = false;
             let checked = build::compile(&verification, cancel.clone())?;
             if !checked.success {
                 return Err(error(format!(
@@ -172,11 +255,32 @@ pub fn flat(
             }) {
                 return Err(error("Flat export still depends on a source-project path"));
             }
-            fs::copy(checked.pdf, output.join(format!("{root}.pdf")))?;
-            let bbl = output.join(format!(".folio/{root}.bbl"));
-            if bibliography == Bibliography::Keep && bbl.exists() {
-                fs::copy(bbl, output.join(format!("{root}.bbl")))?;
+            // Every reference and citation the original resolved must still
+            // resolve, so no "??" reaches the journal: a supplementary label,
+            // or a citation the shipped bibliography lacks.
+            let log = |dir: &Path| {
+                fs::read(dir.join(format!(".folio/{root}.log")))
+                    .map(|b| references::undefined(&String::from_utf8_lossy(&b)))
+                    .unwrap_or_default()
+            };
+            let before = log(&source);
+            let lost: Vec<_> = log(&output).difference(&before).cloned().collect();
+            if !lost.is_empty() {
+                return Err(error(format!(
+                    "Flat export of {root}.tex leaves references or citations undefined: {}",
+                    lost.join(", ")
+                )));
             }
+            fs::copy(checked.pdf, output.join(format!("{root}.pdf")))?;
+        }
+        // An omitted supplement is still submitted, as a PDF. It must be the
+        // build whose numbers main.tex now spells out, so it comes from this
+        // export's snapshot rather than the author's last build.
+        if omitted {
+            fs::copy(
+                source.join(".folio/supplement.pdf"),
+                output.join("supplement.pdf"),
+            )?;
         }
         fs::remove_dir_all(output.join(".folio"))?;
         let engine = match config.engine {
@@ -184,24 +288,44 @@ pub fn flat(
             build::Engine::XeLatex => "-xelatex",
             build::Engine::LuaLatex => "-lualatex",
         };
-        let options = if bibliography == Bibliography::Inline {
-            "-bibtex- "
-        } else {
-            ""
+        let direct = match config.engine {
+            build::Engine::PdfLatex => "pdflatex",
+            build::Engine::XeLatex => "xelatex",
+            build::Engine::LuaLatex => "lualatex",
+        };
+        let passes = 2;
+        let bibliography_note = match bibliography {
+            Bibliography::Keep => {
+                "The compiled bibliography is in the .bbl file, so no BibTeX or Biber run is needed. The .bib files are included for reference.\n"
+            }
+            Bibliography::Inline => {
+                "The compiled bibliography is embedded in the .tex file, so no BibTeX, Biber or .bib file is needed.\n"
+            }
         };
         fs::write(
             output.join("BUILD.txt"),
             format!(
-                "Build with TeX Live or MiKTeX:\n{}\nVerified by Folio. Sections and tables are expanded in {}.\n",
+                "Build with TeX Live or MiKTeX:\n{}\nor run the engine alone, {passes} times per document:\n{}\n{bibliography_note}Verified by Folio. Sections and tables are expanded in {}.\n{}",
                 roots
                     .iter()
-                    .map(|root| format!("latexmk -norc {engine} {options}{root}.tex\n"))
+                    .rev()
+                    .map(|root| format!("latexmk -norc {engine} -bibtex- {root}.tex\n"))
+                    .collect::<String>(),
+                roots
+                    .iter()
+                    .rev()
+                    .map(|root| format!("{direct} {root}.tex\n"))
                     .collect::<String>(),
                 roots
                     .iter()
                     .map(|root| format!("{root}.tex"))
                     .collect::<Vec<_>>()
                     .join(" and "),
+                if omitted {
+                    "References to the supplementary material are written out in main.tex, numbered as in supplement.pdf, built in the same export.\n"
+                } else {
+                    ""
+                },
             ),
         )?;
         check_cancel(&cancel)?;
@@ -210,11 +334,40 @@ pub fn flat(
                 "Export destination appeared while exporting; choose another folder",
             ));
         }
+        if archive {
+            let pdfs: Vec<String> = documents.iter().map(|r| format!("{r}.pdf")).collect();
+            let mut entries = vec![];
+            for entry in fs::read_dir(&output)? {
+                let name = entry?.file_name().to_string_lossy().into_owned();
+                if !pdfs.contains(&name) {
+                    let data = fs::read(output.join(&name))?;
+                    entries.push((name, data));
+                }
+            }
+            entries.sort();
+            let staged = staging.join("archive.zip");
+            zip::write(&staged, &entries)?;
+            fs::rename(staged, &destination)?;
+            let mut published = vec![];
+            for root in &documents {
+                fs::rename(output.join(format!("{root}.pdf")), beside(root))?;
+                published.push(beside(root));
+            }
+            return Ok(ExportResult {
+                path: destination.clone(),
+                files: entries.len(),
+                pdfs: published,
+            });
+        }
         let count = fs::read_dir(&output)?.count();
         fs::rename(output, &destination)?;
         Ok(ExportResult {
-            directory: destination.clone(),
+            path: destination.clone(),
             files: count,
+            pdfs: documents
+                .iter()
+                .map(|root| destination.join(format!("{root}.pdf")))
+                .collect(),
         })
     })();
     let _ = fs::remove_dir_all(staging);
@@ -608,6 +761,11 @@ fn used_resources(source: &Path, files: &[PathBuf], roots: &[&str]) -> io::Resul
         })
         .cloned()
         .collect())
+}
+fn has_bibliography(text: &str) -> io::Result<bool> {
+    Ok(calls(text)?
+        .iter()
+        .any(|c| matches!(c.name.as_str(), "bibliography" | "addbibresource")))
 }
 fn inline_bibliography(text: &str, bbl: &Path, document: &str) -> io::Result<String> {
     let calls = calls(text)?;

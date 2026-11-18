@@ -139,6 +139,10 @@ pub struct App {
     project_popup: Option<ProjectPopup>,
     project_busy: bool,
     export_mode: Bibliography,
+    /// Export supplement.tex too; without it, references into it become text.
+    export_supplement: bool,
+    /// Package the export as a .zip for journal upload instead of a folder.
+    export_zip: bool,
     exporting: bool,
     files: Vec<PathBuf>,
     /// Project files relative to the main file's folder, for path completion.
@@ -236,6 +240,8 @@ impl App {
             project_popup: None,
             project_busy: false,
             export_mode: Bibliography::Keep,
+            export_supplement: true,
+            export_zip: false,
             exporting: false,
             files: vec![],
             completion_files: vec![],

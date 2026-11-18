@@ -435,3 +435,142 @@ fn a_bibliography_file_that_does_not_exist_is_reported_by_a_real_build() {
     }
     fs::remove_dir_all(base).unwrap();
 }
+#[test]
+#[ignore = "requires latexmk, pdfLaTeX, XeLaTeX, BibTeX, latexpand and unzip"]
+fn journal_archive_without_supplement_writes_out_supplementary_references() {
+    journal_archive(Engine::PdfLatex, "pdflatex");
+    journal_archive(Engine::XeLatex, "xelatex");
+}
+fn journal_archive(engine: Engine, program: &str) {
+    use folio_core::{
+        export::{self, Bibliography, Options},
+        project::Project,
+    };
+    let base = std::env::temp_dir().join(format!(
+        "folio-journal-export-{program}-{}",
+        std::process::id()
+    ));
+    let _ = fs::remove_dir_all(&base);
+    fs::create_dir_all(&base).unwrap();
+    let p = Project::create(&base.join("paper"), "Journal paper", engine).unwrap();
+    let starter = compile(&p.build_config().unwrap(), Arc::new(AtomicBool::new(false))).unwrap();
+    assert!(starter.success, "{}", starter.log);
+    fs::copy(
+        &starter.pdf,
+        p.directory.join("figures/only-supplement.pdf"),
+    )
+    .unwrap();
+    fs::write(p.directory.join("references.bib"), "@book{knuth,author={Donald Knuth},title={The TeXbook},year={1984},publisher={Addison-Wesley}}\n").unwrap();
+    fs::write(
+        p.directory.join("supplement.tex"),
+        "\\documentclass{article}\n\\usepackage{graphicx}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\renewcommand{\\thetable}{S\\arabic{table}}\n\\begin{document}\n\\begin{table}\\caption{A}\\label{tab:a}\\end{table}\n\\begin{table}\\caption{B}\\label{tab:b}\\end{table}\n\\begin{table}\\caption{C}\\label{tab:c}\\end{table}\n\\includegraphics[width=1cm]{figures/only-supplement}\n\\end{document}\n",
+    )
+    .unwrap();
+    let main = fs::read_to_string(p.directory.join("main.tex"))
+        .unwrap()
+        .replace(
+            "\\begin{document}",
+            "\\usepackage{xr-hyper}\n\\usepackage{hyperref}\n\\usepackage{cleveref}\n\\externaldocument[S-]{supplement}\n\\begin{document}",
+        );
+    fs::write(p.directory.join("main.tex"), &main).unwrap();
+    fs::write(
+        p.directory.join("sections/introduction.tex"),
+        "\\section{Introduction}\nKnuth~\\cite{knuth}. Table~\\ref{S-tab:b}, \\autoref{S-tab:a} and \\cref{S-tab:a,S-tab:b,S-tab:c}.\n",
+    )
+    .unwrap();
+    let options = Options {
+        bibliography: Bibliography::Keep,
+        supplement: false,
+    };
+    let archive = base.join("journal.zip");
+    let result = export::flat(&p, &archive, options, Arc::new(AtomicBool::new(false))).unwrap();
+    assert_eq!(result.path, archive.canonicalize().unwrap());
+    let canonical = base.canonicalize().unwrap();
+    assert_eq!(
+        result.pdfs,
+        [
+            canonical.join("journal.pdf"),
+            canonical.join("journal-supplement.pdf")
+        ]
+    );
+    // The supplement is submitted as a PDF, from the build that numbered it.
+    let supplement = std::process::Command::new("pdftotext")
+        .arg(canonical.join("journal-supplement.pdf"))
+        .arg("-")
+        .output();
+    if let Ok(out) = supplement {
+        let text = String::from_utf8_lossy(&out.stdout);
+        assert!(text.contains("Table S2"), "{text}");
+    }
+    assert!(
+        export::flat(&p, &archive, options, Arc::new(AtomicBool::new(false))).is_err(),
+        "never overwrite an archive"
+    );
+    let unpacked = base.join("unpacked");
+    let unzip = std::process::Command::new("unzip")
+        .arg("-q")
+        .arg(&archive)
+        .arg("-d")
+        .arg(&unpacked)
+        .status()
+        .unwrap();
+    assert!(unzip.success());
+    let mut names: Vec<String> = fs::read_dir(&unpacked)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    names.sort();
+    // What a journal compiles: no supplement, its figure, or the PDFs.
+    assert_eq!(
+        names,
+        ["BUILD.txt", "main.bbl", "main.tex", "references.bib"]
+    );
+    let flat = fs::read_to_string(unpacked.join("main.tex")).unwrap();
+    assert!(
+        !flat.contains("S-tab") && !flat.contains("externaldocument") && !flat.contains("xr-hyper"),
+        "{flat}"
+    );
+    assert!(flat.contains("Table~S2, \\tableautorefname~S1"), "{flat}");
+    // The archive builds as a journal builds it: the engine alone, twice,
+    // with no BibTeX run, so the citation comes from the shipped main.bbl.
+    for _ in 0..2 {
+        let journal = std::process::Command::new(executable(program))
+            .args(["-interaction=nonstopmode", "main.tex"])
+            .current_dir(&unpacked)
+            .output()
+            .unwrap();
+        assert!(
+            journal.status.success(),
+            "{}",
+            String::from_utf8_lossy(&journal.stdout)
+        );
+    }
+    let log = fs::read_to_string(unpacked.join("main.log")).unwrap();
+    assert!(!log.contains("undefined"), "{log}");
+    assert!(
+        !unpacked.join("main.blg").exists(),
+        "BibTeX must not have run"
+    );
+    let build = fs::read_to_string(unpacked.join("BUILD.txt")).unwrap();
+    assert!(
+        build.contains("-bibtex- main.tex") && build.contains(&format!("\n{program} main.tex")),
+        "{build}"
+    );
+    // A supplementary reference Folio cannot write out stops the export.
+    fs::write(
+        p.directory.join("sections/introduction.tex"),
+        "\\section{Introduction}\nKnuth~\\cite{knuth}. \\ref{S-tab:a} and \\labelcref{S-tab:a}.\n",
+    )
+    .unwrap();
+    assert!(
+        export::flat(
+            &p,
+            &base.join("unsupported.zip"),
+            options,
+            Arc::new(AtomicBool::new(false))
+        )
+        .is_err()
+    );
+    assert!(!base.join("unsupported.zip").exists() && !base.join("unsupported.pdf").exists());
+    fs::remove_dir_all(base).unwrap();
+}

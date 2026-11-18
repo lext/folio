@@ -143,8 +143,10 @@ the package names.
 Choose **Export flat project** in Commands, select a bibliography mode, then choose
 a **new folder outside the authoring project**:
 
-- **Keep bibliography files (.bib):** retain BibTeX/BibLaTeX data and normal citation
-  commands. The compiled `.bbl` is also included when one is produced.
+- **Ship compiled .bbl, keep .bib files:** retain normal citation commands and the
+  BibTeX/BibLaTeX data, and ship the compiled `main.bbl` (and `supplement.bbl`)
+  beside the `.tex`. A document with a bibliography but no compiled `.bbl` is
+  not exported.
 - **Embed compiled bibliography in main.tex:** expand traditional BibTeX's rendered
   bibliography into the document. For BibLaTeX, embed its compiled data using
   `filecontents*`, preserving BibLaTeX formatting without needing Biber or `.bib`
@@ -152,10 +154,53 @@ a **new folder outside the authoring project**:
 
 Both modes expand included sections and tables into **one `main.tex`**, put required
 figures/resources **beside it**, and resolve duplicate asset names deterministically.
-The folder includes a verified `main.pdf` and `BUILD.txt` with the exact build command.
-For embedded bibliographies, that command includes `-bibtex-`. When the project has
+The folder includes a verified `main.pdf` and `BUILD.txt` with the exact build commands.
+
+Journals typeset with the engine alone and never run BibTeX or Biber. So in both
+modes the export is checked the same way: with pdfLaTeX, XeLaTeX or LuaLaTeX (the
+project's engine) and no bibliography tool, reading only the shipped or embedded
+bibliography. If any citation or reference that resolved in the original build is
+undefined there, the export stops instead of shipping "?". `BUILD.txt` gives
+`latexmk -bibtex-` and the equivalent plain engine runs. When the project has
 a `supplement.tex`, it is flattened and verified the same way and exported beside the
-paper as `supplement.tex` and `supplement.pdf`.
+paper as `supplement.tex` and `supplement.pdf`. The supplement is built first, so
+the paper's references into it use current numbers.
+
+**Referring to the supplement.** Load `xr-hyper` (before `hyperref`) or `xr` in
+`main.tex` and import the supplement's labels:
+
+```latex
+\usepackage{xr-hyper}
+\usepackage{hyperref}
+\usepackage{cleveref}
+\externaldocument[S-]{supplement}
+...
+see Supplementary Table~\ref{S-tab:scores} and \cref{S-tab:a,S-tab:b,S-tab:c}
+```
+
+`.folio/supplement.aux` is found automatically. After the supplement's numbering
+changes, the paper shows the new numbers on its next build.
+
+**Exporting without the supplement.** Clear **Include supplement.tex** (CLI:
+`--without-supplement`) to submit the paper on its own. Every reference into the
+supplement is replaced by the text it typesets, using the supplement's last build:
+`\ref`, `\pageref`, `\eqref`, `\nameref` and `\hyperref[...]{...}` become their
+text, `\autoref` becomes `\tableautorefname~S1` and similar, and `\cref`/`\Cref`
+use the paper's own cleveref formats, so `\crefname` settings, sorting and ranges
+are kept. The `\externaldocument` import and `xr` are removed, and files used only
+by the supplement are left out. The supplement is still exported as a PDF, ready to upload
+as supplementary material: `supplement.pdf` in a folder export, or
+`<name>-supplement.pdf` beside an archive. It comes from the same build that
+numbered the references in `main.tex`, so the two always agree. A reference that mixes paper and supplement labels
+(`\cref{tab:1,S-tab:2}`) or uses other cleveref commands (`\labelcref`,
+`\crefrange`, `\vref`, …) stops the export with a message. So does any reference
+that resolved in the original build but would be undefined in the export.
+
+**ZIP archive.** Choose **Package as a .zip** (CLI: a destination ending in
+`.zip`) to get one archive a journal can compile directly: the flat `.tex`, the
+`.bbl` and `.bib`, figures, styles and `BUILD.txt`. The verified PDF is kept out of
+the archive and saved beside it as `<name>.pdf` (and `<name>-supplement.pdf` when
+the supplement is included).
 
 Export runs in the background from a saved snapshot. It builds the snapshot,
 flattens it, builds the export, and only then creates the destination. **Cancel
@@ -180,6 +225,7 @@ CLI equivalents (after `cargo build --bin folio-cli`):
 ./target/debug/folio-cli build ../paper   # prints main.pdf and supplement.pdf
 ./target/debug/folio-cli project export ../paper ../submission --bibliography inline
 ./target/debug/folio-cli project export ../paper ../submission-bib --bibliography bibtex
+./target/debug/folio-cli project export ../paper ../journal.zip --without-supplement
 ```
 
 ## Recent projects
