@@ -35,9 +35,12 @@ SyncTeX, BibTeX, Biber, BibLaTeX and `latexpand`, then:
 ```
 
 On Debian/Ubuntu the TeX packages are `latexmk`, `texlive-latex-base`,
-`texlive-latex-recommended`, `cm-super`, `texlive-xetex`, `texlive-extra-utils`,
+`texlive-latex-recommended`, `texlive-latex-extra`, `texlive-fonts-recommended`,
+`tex-gyre`, `cm-super`, `texlive-xetex`, `texlive-extra-utils`,
 `texlive-bibtex-extra` and `biber`. MacTeX includes the required tools; with
-BasicTeX, use `tlmgr` to install `latexmk fontspec latexpand biblatex biber cm-super`.
+BasicTeX, use `tlmgr` to install `latexmk fontspec latexpand biblatex biber cm-super`
+and, for the new-project paper template, `mathastext preprint lineno titlesec
+cleveref tex-gyre psnfss helvetic courier caption booktabs pgf natbib xcolor`.
 The check script builds a disposable copy of the welcome project. It does not
 typeset into an example you may have open. Manual profiling tests stay excluded.
 
