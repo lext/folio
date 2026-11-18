@@ -36,7 +36,7 @@ SyncTeX, BibTeX, Biber, BibLaTeX and `latexpand`, then:
 
 On Debian/Ubuntu the TeX packages are `latexmk`, `texlive-latex-base`,
 `texlive-latex-recommended`, `texlive-latex-extra`, `texlive-fonts-recommended`,
-`tex-gyre`, `cm-super`, `texlive-xetex`, `texlive-extra-utils`,
+`texlive-publishers`, `tex-gyre`, `cm-super`, `texlive-xetex`, `texlive-extra-utils`,
 `texlive-bibtex-extra` and `biber`. MacTeX includes the required tools; with
 BasicTeX, use `tlmgr` to install `latexmk fontspec latexpand biblatex biber cm-super`
 and, for the new-project paper template, `mathastext preprint lineno titlesec
