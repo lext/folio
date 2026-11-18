@@ -40,7 +40,7 @@ On Debian/Ubuntu the TeX packages are `latexmk`, `texlive-latex-base`,
 `texlive-bibtex-extra` and `biber`. MacTeX includes the required tools; with
 BasicTeX, use `tlmgr` to install `latexmk fontspec latexpand biblatex biber cm-super`
 and, for the new-project paper template, `mathastext preprint lineno titlesec
-cleveref tex-gyre psnfss helvetic courier caption booktabs pgf natbib xcolor`.
+cleveref tex-gyre psnfss helvetic courier caption booktabs pgf natbib xcolor nature`.
 The check script builds a disposable copy of the welcome project. It does not
 typeset into an example you may have open. Manual profiling tests stay excluded.
 

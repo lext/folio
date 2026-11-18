@@ -59,6 +59,11 @@ jobs:
         # quickly rather than consume the whole job.
         timeout-minutes: 15
         run: |
+          # The image's default EC2 mirror has been downloading at ~100 kB/s;
+          # the Azure mirror it used before is fast, archive.ubuntu.com backs it up.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf 'http://azure.archive.ubuntu.com/ubuntu/\tpriority:1\nhttp://archive.ubuntu.com/ubuntu/\tpriority:2\n' | sudo tee /etc/apt/apt-mirrors.txt
+          fi
           sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=30 update
           # texlive-latex-extra (mathastext, authblk, lineno, titlesec,
           # cleveref) and tex-gyre are what the new-project paper template needs.
@@ -73,7 +78,7 @@ jobs:
           sudo /Library/TeX/texbin/tlmgr update --self
           sudo /Library/TeX/texbin/tlmgr install latexmk fontspec latexpand biblatex biber cm-super
           # The new-project paper template (templates/paper).
-          sudo /Library/TeX/texbin/tlmgr install mathastext preprint lineno titlesec cleveref tex-gyre psnfss helvetic courier caption booktabs pgf natbib xcolor
+          sudo /Library/TeX/texbin/tlmgr install mathastext preprint lineno titlesec cleveref tex-gyre psnfss helvetic courier caption booktabs pgf natbib xcolor nature etoolbox url zapfding epstopdf-pkg refcount rerunfilecheck uniquecounter gettitlestring kvdefinekeys
       - uses: actions/cache@v4
         with:
           path: .cargo-local/registry
